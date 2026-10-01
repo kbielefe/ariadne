@@ -65,7 +65,7 @@ export function GraphView({ selected, onSelect }: { selected: string | null; onS
       }
       if (n.attrs.paused) classes.push('paused');
       if (id === focus) classes.push('focus');
-      els.push({ group: 'nodes', data: { id, label: n.title }, classes: classes.join(' ') });
+      els.push({ group: 'nodes', data: { id, label: n.title.length > 64 ? `${n.title.slice(0, 63)}…` : n.title, title: n.title }, classes: classes.join(' ') });
     }
     for (const e of edges) if (ids.has(e.src) && ids.has(e.dst)) els.push({ group: 'edges', data: { id: e.id, source: e.src, target: e.dst, label: e.kind === 'needs' ? '' : EDGE_RULES[e.kind].label }, classes: e.kind });
     if (f.showAssigned)
@@ -180,7 +180,7 @@ function styles(): cytoscape.StylesheetJson {
       style: {
         label: 'data(label)',
         'text-wrap': 'wrap',
-        'text-max-width': '150px',
+        'text-max-width': '160px',
         'font-size': 12,
         color: fg,
         'text-valign': 'center',
@@ -188,8 +188,8 @@ function styles(): cytoscape.StylesheetJson {
         'background-color': surface,
         'border-width': 1.5,
         'border-color': line,
-        width: 170,
-        height: 44,
+        width: 180,
+        height: 52,
         shape: 'round-rectangle',
       },
     },
@@ -272,7 +272,8 @@ function Canvas({ elements, selected, onSelect, onFocus }: { elements: ElementDe
     const key = elements.map((e) => e.data.id).sort().join(',');
     if (key !== shape.current) {
       shape.current = key;
-      const layout = c.layout({ name: 'dagre', rankDir: 'TB', nodeSep: 30, rankSep: 70, animate: false, fit: true, padding: 30 } as cytoscape.LayoutOptions);
+      // Wide graphs read better left to right: a fan of many children becomes a tall column.
+      const layout = c.layout({ name: 'dagre', rankDir: elements.filter((e) => e.group === 'nodes').length > 10 ? 'LR' : 'TB', nodeSep: 14, rankSep: 90, animate: false, fit: true, padding: 30 } as cytoscape.LayoutOptions);
       // A handful of nodes shouldn't fill the screen.
       layout.one('layoutstop', () => {
         if (c.zoom() > 1.1) {
