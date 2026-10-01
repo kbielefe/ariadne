@@ -53,8 +53,11 @@ async function main() {
   registerApi(app, core, { allowedHosts, mcpToken: mcpToken() });
   const webDir = resolve(env.ARIADNE_WEB_DIR ?? 'dist/web');
   if (existsSync(webDir)) {
-    await app.register(fastifyStatic, { root: webDir, wildcard: false });
-    app.setNotFoundHandler((req, reply) => (req.url.startsWith('/api') ? reply.code(404).send({ error: 'Not found' }) : reply.sendFile('index.html')));
+    await app.register(fastifyStatic, { root: webDir });
+    // Client-side routes get the app; missing API routes and assets get a plain 404.
+    app.setNotFoundHandler((req, reply) =>
+      req.method !== 'GET' || /^\/(api|assets|mcp)\b/.test(req.url) ? reply.code(404).send({ error: 'Not found' }) : reply.sendFile('index.html'),
+    );
   }
 
   const log = { info: (m: string, o?: object) => app.log.info(o ?? {}, m), error: (m: string, o?: object) => app.log.error(o ?? {}, m) };
