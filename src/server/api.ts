@@ -74,8 +74,8 @@ export function registerApi(app: FastifyInstance, core: Core, o: ApiOptions) {
   app.post('/api/ops', async (req) => ({ results: await core.ops(who(USER_ID, 'ui'), (req.body as { ops?: unknown })?.ops) }));
 
   app.post('/api/chat', async (req) => {
-    const b = z.object({ text: z.string().min(1).max(20000), focus: z.uuid().nullable().optional() }).parse(req.body);
-    return core.chat(b.text, b.focus ?? null);
+    const b = z.object({ text: z.string().min(1).max(20000), focus: z.uuid().nullable().optional(), refs: z.array(z.uuid()).max(30).optional() }).parse(req.body);
+    return core.chat(b.text, b.focus ?? null, b.refs ?? []);
   });
 
   app.post<{ Params: { id: string } }>('/api/cards/:id/respond', async (req) => core.respond(z.uuid().parse(req.params.id), req.body));

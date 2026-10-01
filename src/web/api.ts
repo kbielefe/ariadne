@@ -43,7 +43,7 @@ export const api = {
   node: (id: string) => call<NodeDetail>('GET', `/api/nodes/${id}`),
   timeline: (focus: string | null, all: boolean) => call<Timeline>('GET', `/api/timeline?${new URLSearchParams({ ...(focus ? { focus } : {}), ...(all ? { all: '1' } : {}) })}`),
   ops: (ops: Op[]) => call<{ results: { op: string; id: string; ref?: string }[] }>('POST', '/api/ops', { ops }),
-  chat: (text: string, focus: string | null) => call<Event>('POST', '/api/chat', { text, focus }),
+  chat: (text: string, focus: string | null, refs: string[]) => call<Event>('POST', '/api/chat', { text, focus, refs }),
   respond: (id: string, action: string, values: Record<string, unknown>) => call<Event>('POST', `/api/cards/${id}/respond`, { action, values }),
   undo: (because: string) => call<{ undone: number }>('POST', '/api/undo', { because }),
 };

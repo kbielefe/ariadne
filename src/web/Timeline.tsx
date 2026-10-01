@@ -1,9 +1,9 @@
-import { ArrowRight, Bell, Eye, EyeOff, Send, Undo2 } from 'lucide-react';
+import { ArrowRight, Bell, Eye, EyeOff, Send, Undo2, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ANALYST_ID, type Event, USER_ID } from '../shared/model';
 import { api, type StatusLine, type Timeline } from './api';
 import { useApp } from './App';
-import { ago, Md, NodeChip, nodeLink, pct } from './bits';
+import { ago, Md, NodeChip, pct } from './bits';
 import { CardView } from './CardView';
 
 /**
@@ -175,35 +175,24 @@ function Delegation({ ev }: { ev: Event }) {
 }
 
 function Composer() {
-  const { focus, name, pendingRefs, clearRefs, byId } = useApp();
+  const { focus, name, refs, unreference, clearRefs } = useApp();
   const [text, setText] = useState('');
-  const box = useRef<HTMLTextAreaElement>(null);
-  // "Reference in chat" from the graph lands here, at the cursor.
-  useEffect(() => {
-    if (!pendingRefs.length) return;
-    const links = pendingRefs.map((id) => byId.get(id)).filter((n) => n !== undefined).map(nodeLink).join(' ');
-    clearRefs();
-    if (!links) return;
-    const el = box.current;
-    const at = el?.selectionStart ?? text.length;
-    const before = text.slice(0, at);
-    const after = text.slice(el?.selectionEnd ?? at);
-    setText(`${before}${before && !/\s$/.test(before) ? ' ' : ''}${links} ${after}`.trimStart());
-    setTimeout(() => {
-      el?.focus();
-      const end = (before + links).length + 2;
-      el?.setSelectionRange(end, end);
-    }, 0);
-  }, [pendingRefs]); // eslint-disable-line react-hooks/exhaustive-deps
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const box = useRef<HTMLTextAreaElement>(null);
+  // A node was just attached from the graph: ready to type about it.
+  const count = refs.length;
+  useEffect(() => {
+    if (count) box.current?.focus();
+  }, [count]);
   const send = async () => {
     if (!text.trim() || busy) return;
     setBusy(true);
     setError(null);
     try {
-      await api.chat(text, focus);
+      await api.chat(text, focus, refs);
       setText('');
+      clearRefs();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -219,6 +208,18 @@ function Composer() {
       }}
     >
       {focus && <span className="muted small">About: {name(focus)}</span>}
+      {refs.length > 0 && (
+        <div className="chips ref-chips" aria-label="Attached to this message">
+          {refs.map((id) => (
+            <span key={id} className="chip attached">
+              <NodeChip id={id} />
+              <button type="button" className="icon" aria-label={`Remove ${name(id)}`} onClick={() => unreference(id)}>
+                <X size={12} />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
       <div className="composer-row">
         <textarea
           ref={box}

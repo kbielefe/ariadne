@@ -848,3 +848,42 @@ code,
     grid-column: auto;
   }
 }
+
+.ref-chips {
+  margin: 6px 0 8px;
+}
+.chip.attached {
+  cursor: default;
+  padding-right: 4px;
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+.chip.attached .chip {
+  background: none;
+  border: 0;
+}
+
+/* long titles and descriptions must wrap inside the panel, never widen it */
+.panel {
+  overflow-x: hidden;
+}
+.panel-body {
+  grid-template-columns: minmax(0, 1fr);
+}
+.panel-body * {
+  min-width: 0;
+}
+.panel-body .link,
+.edges li .link {
+  overflow-wrap: anywhere;
+}
+.edges li .link {
+  display: block;
+}
+.edges li .link svg {
+  vertical-align: -2px;
+  margin-right: 4px;
+}
+.edges li .icon {
+  flex: none;
+}

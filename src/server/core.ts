@@ -103,14 +103,18 @@ export class Core {
   // ============================================================== events
 
   /** You type in the chat: an assignment to the analyst, about the focus task if there is one. */
-  async chat(text: string, focus?: string | null): Promise<Event> {
+  async chat(text: string, focus?: string | null, refs: string[] = []): Promise<Event> {
     if (!text.trim()) throw new Invalid('Say something');
     return this.run(who(USER_ID, 'ui'), async (c, after) => {
-      // [Title](ariadne:<id>) links in the text attach those tasks, so the Analyst gets their context.
-      const linked = [...text.matchAll(/\(ariadne:([0-9a-f-]{36})\)/g)].map((m) => m[1]!);
-      const known = linked.length ? (await c.tx.query(`SELECT id FROM nodes WHERE kind = 'task' AND id = ANY($1::uuid[])`, [linked])).rows.map((r) => r.id as string) : [];
-      const tasks = [...new Set([...(focus ? [focus] : []), ...known])];
-      return this.sendTx(c, after, USER_ID, { kind: 'assign', recipient: ANALYST_ID, body: text, tasks }, ['triage']);
+      // Nodes you attached (or linked inline as [Title](ariadne:<id>)) travel with the message: tasks are
+      // attached so the Analyst gets their context, and every one is listed at the end of the text.
+      const inline = [...text.matchAll(/\(ariadne:([0-9a-f-]{36})\)/g)].map((m) => m[1]!);
+      const wanted = [...new Set([...refs, ...inline])];
+      const nodes = wanted.length ? (await c.tx.query('SELECT * FROM nodes WHERE id = ANY($1::uuid[])', [wanted])).rows.map(s.mapNode) : [];
+      const tasks = [...new Set([...(focus ? [focus] : []), ...nodes.filter((n) => n.kind === 'task').map((n) => n.id)])];
+      const attached = nodes.filter((n) => refs.includes(n.id));
+      const body = attached.length ? `${text.trimEnd()}\n\n${attached.map((n) => `[${n.title.replace(/[[\]]/g, '')}](ariadne:${n.id})`).join(' ')}` : text;
+      return this.sendTx(c, after, USER_ID, { kind: 'assign', recipient: ANALYST_ID, body, tasks }, ['triage']);
     });
   }
 

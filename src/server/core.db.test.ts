@@ -107,6 +107,16 @@ describe('chat and cards', () => {
     expect(chat.tasks).toEqual([t.a]); // people stay links in the text; unknown ids are ignored
   });
 
+  it('attached references are listed after the text and their tasks attached', async () => {
+    const t = await ids([
+      { op: 'create_node', ref: 'a', kind: 'task', title: 'Ship [v2]' },
+      { op: 'create_node', ref: 'p', kind: 'person', title: 'Bryan' },
+    ]);
+    const chat = await core.chat('Status?', null, [t.a!, t.p!, '00000000-0000-4000-8000-0000000000ff']);
+    expect(chat.body).toBe(`Status?\n\n[Ship v2](ariadne:${t.a}) [Bryan](ariadne:${t.p})`);
+    expect(chat.tasks).toEqual([t.a]);
+  });
+
   it('you assign only through the analyst', async () => {
     const a = await agent('Coder');
     await expect(core.send(asUser(), { kind: 'assign', recipient: a, body: 'x' })).rejects.toThrow(/through the Analyst/);

@@ -16,10 +16,11 @@ interface AppState {
   show(id: string): void;
   name(id: string | null | undefined): string;
   reload(): void;
-  /** Put a link to this node in the chat box (and go there). */
+  /** Attach this node to the next chat message (and go to the chat). */
   reference(id: string): void;
-  /** References waiting to be inserted by the composer. */
-  pendingRefs: string[];
+  /** Nodes attached to the message being written. */
+  refs: string[];
+  unreference(id: string): void;
   clearRefs(): void;
 }
 
@@ -35,7 +36,7 @@ export function App() {
   const [focus, setFocusState] = useState<string | null>(() => remember.get('focus'));
   const [selected, setSelected] = useState<string | null>(null);
   const [kick, setKick] = useState(0);
-  const [pendingRefs, setPendingRefs] = useState<string[]>([]);
+  const [refs, setRefs] = useState<string[]>([]);
 
   useEffect(() => {
     api.graph().then(setGraph, () => {});
@@ -63,11 +64,12 @@ export function App() {
     name: (id) => (id ? (byId.get(id)?.title ?? '(deleted)') : 'Ariadne'),
     reload: () => setKick((k) => k + 1),
     reference: (id) => {
-      setPendingRefs((r) => [...r, id]);
+      setRefs((r) => (r.includes(id) ? r : [...r, id]));
       go('timeline');
     },
-    pendingRefs,
-    clearRefs: () => setPendingRefs([]),
+    refs: refs.filter((id) => byId.has(id)),
+    unreference: (id) => setRefs((r) => r.filter((x) => x !== id)),
+    clearRefs: () => setRefs([]),
   };
   const focusNode = state.focus ? byId.get(state.focus) : undefined;
 
