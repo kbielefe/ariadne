@@ -98,6 +98,15 @@ describe('chat and cards', () => {
     expect((await core.timeline()).map((e) => e.id)).toEqual([chat.id, reply.id]);
   });
 
+  it('tasks linked in a chat as [Title](ariadne:id) are attached to it', async () => {
+    const t = await ids([
+      { op: 'create_node', ref: 'a', kind: 'task', title: 'Ship v2' },
+      { op: 'create_node', ref: 'p', kind: 'person', title: 'Bryan' },
+    ]);
+    const chat = await core.chat(`Status of [Ship v2](ariadne:${t.a}) and ask [Bryan](ariadne:${t.p}) (ariadne:00000000-0000-4000-8000-0000000000ff)?`);
+    expect(chat.tasks).toEqual([t.a]); // people stay links in the text; unknown ids are ignored
+  });
+
   it('you assign only through the analyst', async () => {
     const a = await agent('Coder');
     await expect(core.send(asUser(), { kind: 'assign', recipient: a, body: 'x' })).rejects.toThrow(/through the Analyst/);

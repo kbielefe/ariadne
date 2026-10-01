@@ -800,3 +800,51 @@ code,
     display: none;
   }
 }
+
+/* collapsible graph panes */
+.graph-view {
+  transition: grid-template-columns 0.15s ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .graph-view {
+    transition: none;
+  }
+}
+.filters[hidden],
+.panel[hidden] {
+  display: none;
+}
+.icon-btn {
+  padding: 6px;
+}
+.pane-toggle {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+}
+.chip.inline {
+  vertical-align: baseline;
+  padding: 0 8px;
+}
+@media (max-width: 900px) {
+  .graph-view {
+    grid-template-columns: 1fr !important;
+  }
+}
+/* each pane keeps its own column even when a neighbour is hidden */
+.graph-view > .filters {
+  grid-column: 1;
+}
+.graph-view > .canvas-wrap {
+  grid-column: 2;
+}
+.graph-view > .panel {
+  grid-column: 3;
+}
+@media (max-width: 900px) {
+  .graph-view > .filters,
+  .graph-view > .canvas-wrap,
+  .graph-view > .panel {
+    grid-column: auto;
+  }
+}

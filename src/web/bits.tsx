@@ -1,5 +1,5 @@
 import { Bot, CircleDot, FileText, ListTodo, User, Users } from 'lucide-react';
-import Markdown from 'react-markdown';
+import Markdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { NodeKind } from '../shared/model';
 import { useApp } from './App';
@@ -14,10 +14,30 @@ export function Md({ text }: { text: string }) {
   if (!text) return null;
   return (
     <div className="md">
-      <Markdown remarkPlugins={[remarkGfm]} components={{ a: (p) => <a {...p} target="_blank" rel="noreferrer" /> }}>
+      <Markdown
+        remarkPlugins={[remarkGfm]}
+        urlTransform={(u) => (u.startsWith(NODE_LINK) ? u : defaultUrlTransform(u))}
+        components={{
+          a: ({ href, children, ...p }) => (href?.startsWith(NODE_LINK) ? <NodeLink id={href.slice(NODE_LINK.length)}>{children}</NodeLink> : <a {...p} href={href} target="_blank" rel="noreferrer">{children}</a>),
+        }}
+      >
         {text}
       </Markdown>
     </div>
+  );
+}
+
+/** References to graph nodes in markdown: [Title](ariadne:<node id>). */
+export const NODE_LINK = 'ariadne:';
+export const nodeLink = (n: { id: string; title: string }) => `[${n.title.replace(/[[\]]/g, '')}](${NODE_LINK}${n.id})`;
+
+function NodeLink({ id, children }: { id: string; children: React.ReactNode }) {
+  const { byId, show } = useApp();
+  const n = byId.get(id);
+  return (
+    <button className={`chip inline ${n?.status && n.status !== 'open' ? 'closed' : ''}`} onClick={() => show(id)} title={n ? `Open "${n.title}" in the graph` : 'Deleted'}>
+      {n && <KindIcon kind={n.kind} size={12} />} {children}
+    </button>
   );
 }
 

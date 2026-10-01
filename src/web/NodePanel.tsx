@@ -1,4 +1,4 @@
-import { Crosshair, Plus, Trash2, X } from 'lucide-react';
+import { Crosshair, MessageSquareQuote, Plus, Trash2, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { ACTOR_KINDS, ANALYST_ID, EDGE_RULES, type Edge, type EdgeKind, Effort, type Event, type Node, type NodeKind, type Op, ResourceType, USER_ID } from '../shared/model';
 import { api, type NodeDetail } from './api';
@@ -71,7 +71,7 @@ export function NewNodeForm({ onCreated }: { onCreated(id: string): void }) {
 // ================================================================ view / edit
 
 export function NodePanel({ id, onSelect }: { id: string; onSelect(id: string | null): void }) {
-  const { version, setFocus, focus } = useApp();
+  const { version, setFocus, focus, reference } = useApp();
   const [d, setD] = useState<NodeDetail | null>(null);
   const { error, run } = useOps();
   useEffect(() => {
@@ -105,6 +105,9 @@ export function NodePanel({ id, onSelect }: { id: string; onSelect(id: string | 
         {d.readiness && <span className={`tag ${d.readiness.ready ? 'good' : ''}`}>{n.status !== 'open' ? n.status : d.readiness.ready ? 'ready' : `waiting on ${d.readiness.waitingOn.length}`}</span>}
         <button className={`btn small ${focus === id ? 'on' : ''}`} onClick={() => setFocus(focus === id ? null : id)}>
           <Crosshair size={14} /> {focus === id ? 'Focused' : 'Focus'}
+        </button>
+        <button className="btn small" onClick={() => reference(id)} title="Put a link to this in the chat box">
+          <MessageSquareQuote size={14} /> Reference in chat
         </button>
         {!protectedNode && (
           <button

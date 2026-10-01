@@ -105,9 +105,13 @@ export class Core {
   /** You type in the chat: an assignment to the analyst, about the focus task if there is one. */
   async chat(text: string, focus?: string | null): Promise<Event> {
     if (!text.trim()) throw new Invalid('Say something');
-    return this.run(who(USER_ID, 'ui'), (c, after) =>
-      this.sendTx(c, after, USER_ID, { kind: 'assign', recipient: ANALYST_ID, body: text, tasks: focus ? [focus] : [] }, ['triage']),
-    );
+    return this.run(who(USER_ID, 'ui'), async (c, after) => {
+      // [Title](ariadne:<id>) links in the text attach those tasks, so the Analyst gets their context.
+      const linked = [...text.matchAll(/\(ariadne:([0-9a-f-]{36})\)/g)].map((m) => m[1]!);
+      const known = linked.length ? (await c.tx.query(`SELECT id FROM nodes WHERE kind = 'task' AND id = ANY($1::uuid[])`, [linked])).rows.map((r) => r.id as string) : [];
+      const tasks = [...new Set([...(focus ? [focus] : []), ...known])];
+      return this.sendTx(c, after, USER_ID, { kind: 'assign', recipient: ANALYST_ID, body: text, tasks }, ['triage']);
+    });
   }
 
   /** You press a button on a card. */

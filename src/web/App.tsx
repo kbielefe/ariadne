@@ -16,6 +16,11 @@ interface AppState {
   show(id: string): void;
   name(id: string | null | undefined): string;
   reload(): void;
+  /** Put a link to this node in the chat box (and go there). */
+  reference(id: string): void;
+  /** References waiting to be inserted by the composer. */
+  pendingRefs: string[];
+  clearRefs(): void;
 }
 
 const Ctx = createContext<AppState | null>(null);
@@ -30,6 +35,7 @@ export function App() {
   const [focus, setFocusState] = useState<string | null>(() => remember.get('focus'));
   const [selected, setSelected] = useState<string | null>(null);
   const [kick, setKick] = useState(0);
+  const [pendingRefs, setPendingRefs] = useState<string[]>([]);
 
   useEffect(() => {
     api.graph().then(setGraph, () => {});
@@ -56,6 +62,12 @@ export function App() {
     },
     name: (id) => (id ? (byId.get(id)?.title ?? '(deleted)') : 'Ariadne'),
     reload: () => setKick((k) => k + 1),
+    reference: (id) => {
+      setPendingRefs((r) => [...r, id]);
+      go('timeline');
+    },
+    pendingRefs,
+    clearRefs: () => setPendingRefs([]),
   };
   const focusNode = state.focus ? byId.get(state.focus) : undefined;
 

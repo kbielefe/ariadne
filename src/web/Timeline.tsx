@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { ANALYST_ID, type Event, USER_ID } from '../shared/model';
 import { api, type StatusLine, type Timeline } from './api';
 import { useApp } from './App';
-import { ago, Md, NodeChip, pct } from './bits';
+import { ago, Md, NodeChip, nodeLink, pct } from './bits';
 import { CardView } from './CardView';
 
 /**
@@ -175,8 +175,26 @@ function Delegation({ ev }: { ev: Event }) {
 }
 
 function Composer() {
-  const { focus, name } = useApp();
+  const { focus, name, pendingRefs, clearRefs, byId } = useApp();
   const [text, setText] = useState('');
+  const box = useRef<HTMLTextAreaElement>(null);
+  // "Reference in chat" from the graph lands here, at the cursor.
+  useEffect(() => {
+    if (!pendingRefs.length) return;
+    const links = pendingRefs.map((id) => byId.get(id)).filter((n) => n !== undefined).map(nodeLink).join(' ');
+    clearRefs();
+    if (!links) return;
+    const el = box.current;
+    const at = el?.selectionStart ?? text.length;
+    const before = text.slice(0, at);
+    const after = text.slice(el?.selectionEnd ?? at);
+    setText(`${before}${before && !/\s$/.test(before) ? ' ' : ''}${links} ${after}`.trimStart());
+    setTimeout(() => {
+      el?.focus();
+      const end = (before + links).length + 2;
+      el?.setSelectionRange(end, end);
+    }, 0);
+  }, [pendingRefs]); // eslint-disable-line react-hooks/exhaustive-deps
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const send = async () => {
@@ -203,6 +221,7 @@ function Composer() {
       {focus && <span className="muted small">About: {name(focus)}</span>}
       <div className="composer-row">
         <textarea
+          ref={box}
           rows={2}
           value={text}
           placeholder="Ask, assign, or answer… (Enter sends, Shift+Enter for a new line)"

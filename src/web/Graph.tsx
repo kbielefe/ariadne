@@ -1,6 +1,6 @@
 import cytoscape, { type Core as Cy, type ElementDefinition } from 'cytoscape';
 import dagre from 'cytoscape-dagre';
-import { Crosshair, Maximize, Plus } from 'lucide-react';
+import { Crosshair, Maximize, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Plus } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { type Direction, readiness, reachable } from '../shared/graph';
 import { EDGE_RULES, type EdgeKind, EdgeKind as EdgeKinds, type NodeKind, USER_ID } from '../shared/model';
@@ -36,6 +36,23 @@ export function GraphView({ selected, onSelect }: { selected: string | null; onS
   const { graph, byId, focus, setFocus } = useApp();
   const [f, setF] = useState<Filters>(loadFilters);
   const [creating, setCreating] = useState(false);
+  const [panes, setPanes] = useState<{ filters: boolean; details: boolean }>(() => {
+    try {
+      return { filters: true, details: true, ...JSON.parse(remember.get('graphPanes') ?? '{}') };
+    } catch {
+      return { filters: true, details: true };
+    }
+  });
+  // Selecting something (here, or from a chip in the chat) brings the details back.
+  useEffect(() => {
+    if (selected) setPanes((x) => (x.details ? x : { ...x, details: true }));
+  }, [selected]);
+  const setPane = (p: Partial<typeof panes>) =>
+    setPanes((x) => {
+      const next = { ...x, ...p };
+      remember.set('graphPanes', JSON.stringify(next));
+      return next;
+    });
   const update = (p: Partial<Filters>) =>
     setF((x) => {
       const next = { ...x, ...p };
@@ -78,8 +95,8 @@ export function GraphView({ selected, onSelect }: { selected: string | null; onS
   const counts = useMemo(() => ({ shown: elements.filter((e) => e.group === 'nodes').length, total: graph.nodes.length }), [elements, graph]);
 
   return (
-    <div className="graph-view">
-      <aside className="filters" aria-label="Filters">
+    <div className="graph-view" style={{ gridTemplateColumns: `${panes.filters ? '210px' : '0px'} 1fr ${panes.details ? '380px' : '0px'}` }}>
+      <aside className="filters" aria-label="Filters" hidden={!panes.filters}>
         <fieldset>
           <legend>Show</legend>
           {NODE_KINDS.map((k) => (
@@ -128,18 +145,25 @@ export function GraphView({ selected, onSelect }: { selected: string | null; onS
       <div className="canvas-wrap">
         <Canvas elements={elements} selected={selected} onSelect={onSelect} onFocus={setFocus} />
         <div className="canvas-tools">
+          <button className="btn icon-btn" aria-label={panes.filters ? 'Hide filters' : 'Show filters'} aria-pressed={panes.filters} title={panes.filters ? 'Hide filters' : 'Show filters'} onClick={() => setPane({ filters: !panes.filters })}>
+            {panes.filters ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}
+          </button>
           <button
             className="btn primary"
             onClick={() => {
               onSelect(null);
               setCreating(true);
+              setPane({ details: true });
             }}
           >
             <Plus size={16} /> New
           </button>
         </div>
+        <button className="btn icon-btn pane-toggle" aria-label={panes.details ? 'Hide details' : 'Show details'} aria-pressed={panes.details} title={panes.details ? 'Hide details' : 'Show details'} onClick={() => setPane({ details: !panes.details })}>
+          {panes.details ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
+        </button>
       </div>
-      <aside className="panel" aria-label="Details">
+      <aside className="panel" aria-label="Details" hidden={!panes.details}>
         {selected && byId.has(selected) ? (
           <NodePanel id={selected} onSelect={onSelect} />
         ) : creating || !graph.nodes.length ? (
@@ -247,7 +271,10 @@ function Canvas({ elements, selected, onSelect, onFocus }: { elements: ElementDe
     const restyle = () => c.style(styles());
     mq.addEventListener('change', restyle);
     cy.current = c;
+    const ro = new ResizeObserver(() => c.resize());
+    ro.observe(box.current!);
     return () => {
+      ro.disconnect();
       mq.removeEventListener('change', restyle);
       c.destroy();
     };
