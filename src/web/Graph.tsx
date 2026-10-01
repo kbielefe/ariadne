@@ -36,18 +36,19 @@ export function GraphView({ selected, onSelect }: { selected: string | null; onS
   const { graph, byId, focus, setFocus } = useApp();
   const [f, setF] = useState<Filters>(loadFilters);
   const [creating, setCreating] = useState(false);
-  const [panes, setPanes] = useState<{ filters: boolean; details: boolean }>(() => {
+  const [panes, setPanes] = useState<Panes>(() => {
     try {
-      return { filters: true, details: true, ...JSON.parse(remember.get('graphPanes') ?? '{}') };
+      return { ...DEFAULT_PANES, ...JSON.parse(remember.get('graphPanes') ?? '{}') };
     } catch {
-      return { filters: true, details: true };
+      return DEFAULT_PANES;
     }
   });
+  const [dragging, setDragging] = useState(false);
   // Selecting something (here, or from a chip in the chat) brings the details back.
   useEffect(() => {
     if (selected) setPanes((x) => (x.details ? x : { ...x, details: true }));
   }, [selected]);
-  const setPane = (p: Partial<typeof panes>) =>
+  const setPane = (p: Partial<Panes>) =>
     setPanes((x) => {
       const next = { ...x, ...p };
       remember.set('graphPanes', JSON.stringify(next));
@@ -95,7 +96,7 @@ export function GraphView({ selected, onSelect }: { selected: string | null; onS
   const counts = useMemo(() => ({ shown: elements.filter((e) => e.group === 'nodes').length, total: graph.nodes.length }), [elements, graph]);
 
   return (
-    <div className="graph-view" style={{ gridTemplateColumns: `${panes.filters ? '210px' : '0px'} 1fr ${panes.details ? '380px' : '0px'}` }}>
+    <div className={`graph-view ${dragging ? 'dragging' : ''}`} style={{ gridTemplateColumns: `${panes.filters ? `${panes.filtersW}px` : '0px'} 1fr ${panes.details ? `${panes.detailsW}px` : '0px'}` }}>
       <aside className="filters" aria-label="Filters" hidden={!panes.filters}>
         <fieldset>
           <legend>Show</legend>
@@ -159,6 +160,8 @@ export function GraphView({ selected, onSelect }: { selected: string | null; onS
             <Plus size={16} /> New
           </button>
         </div>
+        {panes.filters && <ResizeHandle side="left" label="Resize filters" width={panes.filtersW} min={160} max={420} fallback={DEFAULT_PANES.filtersW} onChange={(filtersW) => setPane({ filtersW })} onDrag={setDragging} />}
+        {panes.details && <ResizeHandle side="right" label="Resize details" width={panes.detailsW} min={280} max={900} fallback={DEFAULT_PANES.detailsW} onChange={(detailsW) => setPane({ detailsW })} onDrag={setDragging} />}
         <button className="btn icon-btn pane-toggle" aria-label={panes.details ? 'Hide details' : 'Show details'} aria-pressed={panes.details} title={panes.details ? 'Hide details' : 'Show details'} onClick={() => setPane({ details: !panes.details })}>
           {panes.details ? <PanelRightClose size={16} /> : <PanelRightOpen size={16} />}
         </button>
@@ -183,6 +186,56 @@ export function GraphView({ selected, onSelect }: { selected: string | null; onS
         )}
       </aside>
     </div>
+  );
+}
+
+interface Panes {
+  filters: boolean;
+  details: boolean;
+  filtersW: number;
+  detailsW: number;
+}
+const DEFAULT_PANES: Panes = { filters: true, details: true, filtersW: 210, detailsW: 380 };
+
+/** A draggable (and arrow-key operable) divider on the canvas edge next to a sidebar. */
+function ResizeHandle(p: { side: 'left' | 'right'; label: string; width: number; min: number; max: number; fallback: number; onChange(w: number): void; onDrag(on: boolean): void }) {
+  const clamp = (w: number) => Math.round(Math.min(p.max, Math.max(p.min, w)));
+  // The left sidebar grows as you drag right; the right one grows as you drag left.
+  const sign = p.side === 'left' ? 1 : -1;
+  return (
+    <div
+      className={`resize-handle ${p.side}`}
+      role="separator"
+      aria-orientation="vertical"
+      aria-label={p.label}
+      aria-valuenow={p.width}
+      aria-valuemin={p.min}
+      aria-valuemax={p.max}
+      tabIndex={0}
+      title="Drag to resize. Double-click to reset."
+      onDoubleClick={() => p.onChange(p.fallback)}
+      onKeyDown={(e) => {
+        const step = e.shiftKey ? 60 : 20;
+        if (e.key === 'ArrowLeft') p.onChange(clamp(p.width - sign * step));
+        else if (e.key === 'ArrowRight') p.onChange(clamp(p.width + sign * step));
+        else return;
+        e.preventDefault();
+      }}
+      onPointerDown={(e) => {
+        e.preventDefault();
+        const startX = e.clientX;
+        const start = p.width;
+        p.onDrag(true);
+        const move = (m: PointerEvent) => p.onChange(clamp(start + sign * (m.clientX - startX)));
+        const up = () => {
+          window.removeEventListener('pointermove', move);
+          window.removeEventListener('pointerup', up);
+          p.onDrag(false);
+        };
+        window.addEventListener('pointermove', move);
+        window.addEventListener('pointerup', up);
+      }}
+    />
   );
 }
 

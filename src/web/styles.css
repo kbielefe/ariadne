@@ -887,3 +887,45 @@ code,
 .edges li .icon {
   flex: none;
 }
+
+/* resize handles sit on the canvas edge beside each sidebar */
+.resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 9px;
+  z-index: 5;
+  cursor: col-resize;
+  touch-action: none;
+}
+.resize-handle.left {
+  left: -4px;
+}
+.resize-handle.right {
+  right: -4px;
+}
+.resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 4px;
+  width: 2px;
+  background: transparent;
+  transition: background 0.1s;
+}
+.resize-handle:hover::after,
+.resize-handle:focus-visible::after,
+.dragging .resize-handle::after {
+  background: var(--accent);
+}
+.graph-view.dragging {
+  transition: none;
+  user-select: none;
+  cursor: col-resize;
+}
+@media (max-width: 900px) {
+  .resize-handle {
+    display: none;
+  }
+}
