@@ -53,7 +53,41 @@ export interface CoreOptions {
   decideTimeoutMs?: number;
   /** Below this confidence, a System One answer is not used (defaults apply). */
   confidenceThreshold?: number;
+  /** How long an interactive session may hold a claim without a word before Ariadne releases it. */
+  claimTimeoutMinutes?: number;
 }
+
+/** A timer: something Ariadne does at a time. See TIMER_KINDS. */
+export interface TimerInput {
+  kind: TimerKind;
+  at: Date;
+  payload: Record<string, unknown>;
+  /** Names the timer so it can be reset or cancelled; one live timer per key. */
+  key?: string;
+}
+export type TimerKind = 'claim_check' | 'send';
+
+export interface Timer {
+  id: string;
+  kind: string;
+  key: string | null;
+  at: string;
+  payload: Record<string, unknown>;
+  createdBy: string | null;
+  createdAt: string;
+}
+
+const mapTimer = (r: Record<string, unknown>): Timer => ({
+  id: r.id as string,
+  kind: r.kind as string,
+  key: (r.key as string | null) ?? null,
+  at: new Date(r.at as string).toISOString(),
+  payload: r.payload as Record<string, unknown>,
+  createdBy: (r.created_by as string | null) ?? null,
+  createdAt: new Date(r.created_at as string).toISOString(),
+});
+
+export const claimKey = (eventId: string) => `claim:${eventId}`;
 
 interface After {
   changed: boolean;
@@ -66,6 +100,7 @@ interface After {
 export class Core {
   readonly decideTimeoutMs: number;
   readonly confidenceThreshold: number;
+  readonly claimTimeoutMinutes: number;
 
   constructor(
     readonly db: Db,
@@ -74,6 +109,7 @@ export class Core {
   ) {
     this.decideTimeoutMs = o.decideTimeoutMs ?? 5000;
     this.confidenceThreshold = o.confidenceThreshold ?? 0.6;
+    this.claimTimeoutMinutes = o.claimTimeoutMinutes ?? 30;
   }
 
   // ============================================================== transactions
@@ -180,7 +216,8 @@ export class Core {
       const proxy = to.kind !== 'agent' && to.id !== USER_ID;
 
       const holds: HoldUse[] = holdUses.filter((u) => u === 'triage');
-      if (to.kind === 'agent' && !to.attrs.decider && !(input.decisions?.model && input.decisions?.effort)) holds.push('dispatch');
+      // Interactive agents run in a session someone already started: there is no model or effort to pick.
+      if (to.kind === 'agent' && !to.attrs.decider && !to.attrs.interactive && !(input.decisions?.model && input.decisions?.effort)) holds.push('dispatch');
       const decider = holds.length ? await this.findDecider(c.tx) : null;
       const delivery: Event['delivery'] = to.kind !== 'agent' ? 'none' : decider ? 'held' : 'pending';
       const decisions = { ...input.decisions };
@@ -451,6 +488,100 @@ export class Core {
     // Decider traffic is plumbing; it shows up as decisions on the events it decided.
     const deciders = new Set((await s.listNodes(this.db, { kind: 'agent' })).filter((n) => n.attrs.decider).map((n) => n.id));
     return events.filter((e) => !(e.recipient && deciders.has(e.recipient)) && !(e.sender && deciders.has(e.sender)));
+  }
+
+  // ============================================================== timers
+
+  /** Schedules a timer, in the caller's transaction. With a key, replaces that key's live timer. */
+  async scheduleTx(c: Ctx, t: TimerInput): Promise<Timer> {
+    if (t.key) await c.tx.query(`UPDATE timers SET cancelled_at = now() WHERE key = $1 AND fired_at IS NULL AND cancelled_at IS NULL`, [t.key]);
+    const r = await c.tx.query(`INSERT INTO timers (kind, key, at, payload, created_by) VALUES ($1, $2, $3, $4, $5) RETURNING *`, [t.kind, t.key ?? null, t.at, JSON.stringify(t.payload), c.who.actor]);
+    return mapTimer(r.rows[0]);
+  }
+
+  /** Cancels a live timer by id or key. Returns whether one was cancelled. */
+  async cancelTimerTx(c: Ctx, idOrKey: string): Promise<boolean> {
+    const byId = /^[0-9a-f-]{36}$/.test(idOrKey);
+    const r = await c.tx.query(`UPDATE timers SET cancelled_at = now() WHERE ${byId ? 'id = $1::uuid' : 'key = $1'} AND fired_at IS NULL AND cancelled_at IS NULL`, [idOrKey]);
+    return !!r.rowCount;
+  }
+
+  async listTimers(o: { kind?: string } = {}): Promise<Timer[]> {
+    const r = await this.db.query(`SELECT * FROM timers WHERE fired_at IS NULL AND cancelled_at IS NULL ${o.kind ? 'AND kind = $1' : ''} ORDER BY at`, o.kind ? [o.kind] : []);
+    return r.rows.map(mapTimer);
+  }
+
+  /** Runs every timer that is due, once each. A failing timer is marked fired with its error, so it can't loop. */
+  async fireDue(now = new Date()): Promise<number> {
+    let fired = 0;
+    for (;;) {
+      const done = await withTx(this.db, async (tx) => {
+        const r = await tx.query(`SELECT * FROM timers WHERE at <= $1 AND fired_at IS NULL AND cancelled_at IS NULL ORDER BY at LIMIT 1 FOR UPDATE SKIP LOCKED`, [now]);
+        if (!r.rowCount) return false;
+        const t = mapTimer(r.rows[0]);
+        let error: string | null = null;
+        try {
+          await this.runTimer(t);
+        } catch (err) {
+          error = err instanceof Error ? err.message : String(err);
+        }
+        await tx.query(`UPDATE timers SET fired_at = now(), error = $2 WHERE id = $1`, [t.id, error]);
+        return true;
+      });
+      if (!done) return fired;
+      fired++;
+    }
+  }
+
+  private async runTimer(t: Timer): Promise<void> {
+    if (t.kind === 'claim_check') {
+      const eventId = t.payload.eventId as string;
+      await this.run(who(null, 'core', eventId), async (c, after) => {
+        const ev = await s.findEvent(c.tx, eventId);
+        if (!ev || ev.delivery !== 'claimed') return;
+        await c.tx.query(`UPDATE events SET delivery = 'pending', delivered_at = NULL WHERE id = $1`, [eventId]);
+        if (ev.recipient) after.clearStatus.push(ev.recipient);
+        const name = ev.recipient ? ((await s.findNode(c.tx, ev.recipient))?.title ?? 'An interactive session') : 'An interactive session';
+        await this.sendTx(c, after, null, {
+          kind: 'report',
+          recipient: USER_ID,
+          body: `Released a stuck claim: ${name} claimed this and hasn't checked in for ${t.payload.minutes ?? this.claimTimeoutMinutes} minutes. It's back in the queue.\n\n> ${ev.body.split('\n')[0]}`,
+          tasks: ev.tasks,
+        });
+      });
+      return;
+    }
+    if (t.kind === 'send') {
+      const input = t.payload.input as SendInput;
+      try {
+        await this.send(who(t.createdBy, 'core', input.replyTo ?? null), input);
+      } catch (err) {
+        const why = err instanceof Error ? err.message : String(err);
+        await this.send(who(null, 'core'), { kind: 'report', recipient: USER_ID, body: `A scheduled ${input.kind} couldn't be sent (${why}):\n\n> ${(input.body ?? '').split('\n')[0]}`, tasks: [] });
+        throw err;
+      }
+      return;
+    }
+    throw new Error(`Unknown timer kind ${t.kind}`);
+  }
+
+  // ============================================================== claims (interactive sessions)
+
+  /** Claims an event for an interactive session and starts its claim timer. */
+  async claimTx(c: Ctx, eventId: string): Promise<void> {
+    await c.tx.query(`UPDATE events SET delivery = 'claimed', delivered_at = now() WHERE id = $1`, [eventId]);
+    await this.touchClaimTx(c, eventId);
+  }
+
+  /** "Still working": pushes the claim timer back. */
+  async touchClaimTx(c: Ctx, eventId: string, minutes = this.claimTimeoutMinutes): Promise<Timer> {
+    return this.scheduleTx(c, { kind: 'claim_check', key: claimKey(eventId), at: new Date(Date.now() + minutes * 60_000), payload: { eventId, minutes } });
+  }
+
+  /** Finishes (delivered) or releases (pending) a claim. */
+  async endClaimTx(c: Ctx, eventId: string, to: 'delivered' | 'pending'): Promise<void> {
+    await c.tx.query(`UPDATE events SET delivery = $2, delivered_at = CASE WHEN $2 = 'pending' THEN NULL ELSE delivered_at END WHERE id = $1 AND delivery = 'claimed'`, [eventId, to]);
+    await this.cancelTimerTx(c, claimKey(eventId));
   }
 
   // ============================================================== background

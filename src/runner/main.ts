@@ -1,13 +1,10 @@
 // Ariadne runner. One process per actor queue (run several for more throughput).
 //
-//   pnpm runner analyst                 the Analyst: claude -p with Ariadne's MCP
 //   pnpm runner agent   <actorId>       any other agent: claude -p, no Ariadne MCP
 //   pnpm runner decider <actorId>       a System One decider (Jev)
 //
 // Environment:
 //   ARIADNE_AMQP_URL | _FILE        required (amqp://user:pass@127.0.0.1:5672/ariadne)
-//   ARIADNE_MCP_URL                 analyst only, default http://127.0.0.1:3100/mcp
-//   ARIADNE_MCP_TOKEN | _FILE       analyst only, default file secrets/mcp_token
 //   AGENT_COMMAND                   default "claude"
 //   AGENT_ARGS                      extra args as a JSON array, e.g. ["--permission-mode","acceptEdits"]
 //   AGENT_CWD                       working directory for runs (default: current directory)
@@ -16,14 +13,13 @@
 //   SYSTEMONE_API_KEY | _FILE       decider, required
 //   SYSTEMONE_MODEL                 decider, default jev-latest
 import { existsSync, readFileSync } from 'node:fs';
-import { ANALYST_ID } from '../shared/model';
 import { claude, consume } from './adapters';
-import { handleAgent, handleAnalyst, handleDecider, jev, type Log, type Publish } from './handlers';
+import { handleAgent, handleDecider, jev, type Log, type Publish } from './handlers';
 
 const env = process.env;
-const secret = (name: string, defaultFile?: string) => {
+const secret = (name: string) => {
   if (env[name]) return env[name]!.trim();
-  const file = env[`${name}_FILE`] ?? defaultFile;
+  const file = env[`${name}_FILE`];
   return file && existsSync(file) ? readFileSync(file, 'utf8').trim() || undefined : undefined;
 };
 const log: Log = {
@@ -35,20 +31,16 @@ async function main() {
   const [mode, idArg] = process.argv.slice(2);
   const url = secret('ARIADNE_AMQP_URL');
   if (!url) throw new Error('Set ARIADNE_AMQP_URL or ARIADNE_AMQP_URL_FILE');
-  const actorId = mode === 'analyst' ? ANALYST_ID : idArg;
-  if (!actorId) throw new Error('Usage: runner analyst | agent <actorId> | decider <actorId>');
+  const actorId = idArg;
+  // The Analyst is an interactive Claude Code session now (README); it has no runner.
+  if (!actorId) throw new Error('Usage: runner agent <actorId> | decider <actorId>');
 
   const base = { command: env.AGENT_COMMAND ?? 'claude', args: env.AGENT_ARGS ? (JSON.parse(env.AGENT_ARGS) as string[]) : [], cwd: env.AGENT_CWD ?? process.cwd(), timeoutMs: Number(env.AGENT_TIMEOUT_MS ?? 1_800_000), log };
   let publish: Publish = async () => {
     throw new Error('not connected');
   };
   let handle;
-  if (mode === 'analyst') {
-    const token = secret('ARIADNE_MCP_TOKEN', 'secrets/mcp_token');
-    if (!token) throw new Error('Set ARIADNE_MCP_TOKEN or ARIADNE_MCP_TOKEN_FILE');
-    const run = claude({ ...base, mcp: { url: env.ARIADNE_MCP_URL ?? 'http://127.0.0.1:3100/mcp', token } });
-    handle = (d: Parameters<typeof handleAnalyst>[0]) => handleAnalyst(d, run, publish, log);
-  } else if (mode === 'agent') {
+  if (mode === 'agent') {
     const run = claude(base);
     handle = (d: Parameters<typeof handleAgent>[0]) => handleAgent(d, run, publish, log);
   } else if (mode === 'decider') {

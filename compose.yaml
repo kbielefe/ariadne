@@ -1,6 +1,6 @@
 # Ariadne v2: local, single-user stack for rootless Podman Compose. Runs next to v1 (ports differ).
 #   podman compose up -d        Open http://127.0.0.1:3100
-# No authentication on the web UI: loopback only. /mcp needs the analyst's token (secrets/mcp_token).
+# No authentication on the web UI or /mcp: loopback only.
 name: ariadne2
 
 x-podman:
@@ -19,13 +19,12 @@ services:
     environment:
       DATABASE_URL: postgres://ariadne:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/ariadne
       ARIADNE_AMQP_URL: amqp://ariadne:${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}@rabbitmq:5672/ariadne
-      ARIADNE_MCP_TOKEN_FILE: /run/secrets/mcp_token
       ARIADNE_LISTEN_HOST: 0.0.0.0
       ARIADNE_LISTEN_PORT: "3100"
       ARIADNE_ALLOWED_HOSTS: 127.0.0.1:${ARIADNE_PORT:-3100},localhost:${ARIADNE_PORT:-3100}
+      ARIADNE_CLAIM_TIMEOUT_MINUTES: ${ARIADNE_CLAIM_TIMEOUT_MINUTES:-30}
       LOG_LEVEL: ${LOG_LEVEL:-info}
-    secrets: [mcp_token]
-    # The 0600 token file is yours on the host; map you to the image's node user to read it.
+    # Map you to the image's node user.
     userns_mode: "keep-id:uid=1000,gid=1000"
     ports:
       - "127.0.0.1:${ARIADNE_PORT:-3100}:3100"
@@ -85,8 +84,3 @@ networks:
 volumes:
   postgres_data: {}
   rabbitmq_data: {}
-
-secrets:
-  mcp_token:
-    file: ./secrets/mcp_token
-    x-podman.relabel: Z

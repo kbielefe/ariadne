@@ -1,5 +1,6 @@
-// The analyst's MCP server. Only the analyst has MCP (a bearer token guards /mcp); every other
-// agent works through assignments and reports on RabbitMQ.
+// Ariadne's MCP server (/mcp, localhost only, no token yet: agent-specific permissions come later).
+// The Analyst is an interactive Claude Code session: it claims its events with the work tools
+// (workmcp.ts) and acts with the rest. Headless agents work through RabbitMQ instead.
 //
 // Stateless Streamable HTTP: a new server + transport per request, plain JSON responses.
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -13,14 +14,17 @@ import { ContextBuilder } from './context';
 import type { Core } from './core';
 import * as s from './store';
 import { who } from './store';
+import { WORK_INSTRUCTIONS, WORK_TOOLS } from './workmcp';
 
 const INSTRUCTIONS = `You are the Analyst inside Ariadne: the user's trusted external memory.
 Ariadne holds a graph (tasks, people, agents, teams, resources; edges needs/uses/involves/reports_to/member_of)
 and a log of events (assign / report). Every tool call is audited and can be undone by the user.
-Pass "because" = the id of the event you are handling, so your changes are grouped under it.`;
+Pass "because" = the id of the event you are handling, so your changes are grouped under it.
+
+${WORK_INSTRUCTIONS}`;
 
 type Handler = (core: Core, args: never, because: string | null) => Promise<unknown>;
-interface Tool {
+export interface Tool {
   name: string;
   description: string;
   input: z.ZodObject;
@@ -184,6 +188,55 @@ const tools: Tool[] = [
     },
   },
   {
+    name: 'schedule_event',
+    description:
+      'Send an event later: a reminder for the user (report to them), a follow-up assignment, a check-in. Give "at" (ISO time) or "inMinutes". The event is checked when it is sent; if it fails then, the user is told. Returns the timer id for cancel_scheduled.',
+    input: z
+      .object({
+        at: z.iso.datetime({ offset: true }).optional(),
+        inMinutes: z.number().positive().optional(),
+        event: z.object({
+          kind: z.enum(['assign', 'report']),
+          to: z.uuid().optional().describe('Recipient. A report needs "to" or "replyTo"'),
+          replyTo: z.uuid().optional(),
+          closes: z.boolean().optional(),
+          body: z.string().min(1),
+          instructions: z.string().optional(),
+          tasks: z.array(z.uuid()).optional(),
+        }),
+        because,
+      })
+      .refine((x) => (x.at ? 1 : 0) + (x.inMinutes ? 1 : 0) === 1, 'Give exactly one of at or inMinutes'),
+    run: async (core, a: { at?: string; inMinutes?: number; event: { kind: 'assign' | 'report'; to?: string; replyTo?: string; closes?: boolean; body: string; instructions?: string; tasks?: string[] } }, b) => {
+      const at = a.at ? new Date(a.at) : new Date(Date.now() + a.inMinutes! * 60_000);
+      const e = a.event;
+      if (e.kind === 'assign' && !e.to) throw new s.Invalid('An assignment needs "to"');
+      if (e.kind === 'report' && !e.to && !e.replyTo) throw new s.Invalid('A report needs "to" or "replyTo"');
+      if (e.to) await s.getNode(core.db, e.to);
+      const input = { kind: e.kind, body: e.body, ...(e.to ? { recipient: e.to } : {}), ...(e.replyTo ? { replyTo: e.replyTo } : {}), ...(e.closes !== undefined ? { closes: e.closes } : {}), ...(e.instructions ? { instructions: e.instructions } : {}), ...(e.tasks ? { tasks: e.tasks } : {}) };
+      const t = await core.run(who(ANALYST_ID, 'mcp', b), (c) => core.scheduleTx(c, { kind: 'send', at, payload: { input } }));
+      return { id: t.id, at: t.at };
+    },
+  },
+  {
+    name: 'cancel_scheduled',
+    description: 'Cancel a scheduled event (or any timer) before it fires.',
+    input: z.object({ id: z.uuid(), because }),
+    run: async (core, a: { id: string }, b) => {
+      const cancelled = await core.run(who(ANALYST_ID, 'mcp', b), (c) => core.cancelTimerTx(c, a.id));
+      if (!cancelled) throw new s.Invalid('No live timer with that id (it may have fired already)');
+      return { cancelled };
+    },
+  },
+  {
+    name: 'list_scheduled',
+    description: 'Timers that have not fired yet: scheduled events (kind send) and claim checks (kind claim_check).',
+    input: z.object({ kind: z.enum(['send', 'claim_check']).optional() }),
+    readOnly: true,
+    run: async (core, a: { kind?: string }) => core.listTimers(a),
+  },
+  ...WORK_TOOLS,
+  {
     name: 'undo',
     description: 'Revert a changeset (from history).',
     input: z.object({ changeset: z.uuid(), because }),
@@ -191,13 +244,13 @@ const tools: Tool[] = [
   },
 ];
 
-const byName = new Map(tools.map((t) => [t.name, t]));
-
 const ok = (value: unknown): CallToolResult => ({
   content: [{ type: 'text', text: JSON.stringify(value) }],
   structuredContent: value !== null && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : { items: value },
 });
 const fail = (message: string): CallToolResult => ({ isError: true, content: [{ type: 'text', text: message }] });
+
+const byName = new Map(tools.map((t) => [t.name, t]));
 
 export function createMcpServer(core: Core): Server {
   const server = new Server({ name: 'ariadne', version: '0.2.0' }, { capabilities: { tools: {} }, instructions: INSTRUCTIONS });

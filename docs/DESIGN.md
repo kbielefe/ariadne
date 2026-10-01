@@ -2,8 +2,9 @@
 
 **Summary:** Ariadne is a **graph** (tasks, people, agents, teams, resources) plus a **log of
 events** (assign and report). You work in an augmented **chat timeline** with the Analyst, and
-browse or edit everything in a **graph view**. Only the Analyst uses MCP. Every other agent
-works only through assignments and reports on RabbitMQ.
+browse or edit everything in a **graph view**. The Analyst is an **interactive Claude Code
+session** that claims its events over MCP. Headless agents work only through assignments and
+reports on RabbitMQ.
 
 Agreed on 2026-10-01, after using v1 for real work (v1 is on `master`).
 
@@ -13,11 +14,11 @@ Agreed on 2026-10-01, after using v1 for real work (v1 is on `master`).
 
 | v1 | v2 | Why |
 |---|---|---|
-| Outcomes + Tasks + Dependencies + Plans + Reviews + ... (~25 tables) | **5 tables**: `nodes`, `edges`, `events`, `event_tasks`, `audit` | v1 felt like data entry or a bug tracker |
+| Outcomes + Tasks + Dependencies + Plans + Reviews + ... (~25 tables) | **5 tables**: `nodes`, `edges`, `events`, `event_tasks`, `audit` (+ `timers`, §5) | v1 felt like data entry or a bug tracker |
 | Outcome | A **root task**: a task that no task `needs` | One concept instead of two |
 | Subtask *and* prerequisite | One edge kind: **A `needs` B** | Breaking work down and blocking on something are the same thing |
 | Pages and forms | **Chat timeline** + **graph view** | Interactive, not data entry |
-| Agents call MCP | **Only the Analyst** has MCP | Agents are decoupled; all changes go through one place |
+| Agents call MCP | **Only the Analyst** changes the graph over MCP | Agents are decoupled; all changes go through one place |
 
 Kept from v1: people, agents, and teams as first-class actors; System One (Jev-like) decisions;
 RabbitMQ to decouple agents from the core.
@@ -85,8 +86,10 @@ The user is just another actor:
 **Who may assign to whom:** you assign only to the Analyst. The Analyst and Ariadne may assign to
 anyone. Other agents may assign only to their direct subordinates (and to deciders).
 
-**Delivery:** an event to an agent is `pending` until the relay publishes it, then `delivered`. It is
-`held` while Ariadne waits for a System One decision, and `none` for everyone else.
+**Delivery:** an event to an agent is `pending` until the relay publishes it, then `delivered`. For
+an interactive agent (the Analyst, or any agent with `attrs.interactive`) it is `pending` until a
+session claims it (`claimed`), then `delivered` when the session finishes. It is `held` while Ariadne
+waits for a System One decision, and `none` for everyone else.
 
 ## 4. One change vocabulary
 
@@ -109,19 +112,37 @@ browser ──HTTP/SSE──► server (Fastify) ──► PostgreSQL
                        RabbitMQ
          ariadne.deliver → ariadne.actor.<id>      ariadne.inbox ◄── runners
                          │
-          runners: analyst (claude -p + Ariadne MCP), agents (claude -p, no Ariadne MCP), deciders (Jev)
+          runners: agents (claude -p, no Ariadne MCP), deciders (Jev)
+
+Claude Code sessions ──MCP (/mcp)──► server     the Analyst, and interactive agents
 ```
 
 - **Deliveries are self-contained** (server/context.ts): the event, the recipient's briefs, the
-  tasks with inherited context, the recent thread, the supervisor, and subordinates. Agents never
+  tasks with inherited context, the recent thread, the supervisor, and subordinates. Headless agents never
   call back.
-- **Your messages jump the queue:** they have priority 9; agent reports have 1.
+- **Your messages jump the queue:** they have priority 9 on RabbitMQ, and `next_assignment` hands
+  them out first.
 - **Status lines:** runners publish `status` to the inbox, and the Analyst can call `set_status`.
   Browsers see them live over SSE.
 - **System One:** Ariadne asks deciders before delivering (chat triage: intent + what it's about;
   dispatch: one difficulty score → model + effort). No decider, a timeout, or low confidence →
   defaults. Ariadne never calls a model itself.
-- **Overdue:** an assignment with `dueAt` gets one "no report yet" report from Ariadne to its sender.
+- **Claims** (interactive agents; the relay skips them). One `/mcp`, with no token yet (agent-specific
+  permissions come later; it is localhost only). `next_assignment(repo)` claims the next event, your
+  messages first. If one is about the session's repo (inherited `uses`), it gets that; if not, it
+  gets one that isn't about any repo. It returns a markdown brief. `submit_result` finishes it
+  (`done`) or keeps it (`blocked`, `question`, `progress`). For an assignment it reports with an
+  optional `proposals` list, checked as ops. `still_working` resets the claim timer.
+  `release_assignment` puts it back. There is no model/effort dispatch: the session already runs on
+  whatever the person chose.
+- **Timers** (`timers` table): something Ariadne does at a time, with a `kind`, a `payload`, and an
+  optional `key` (one live timer per key, so a timer can be reset or cancelled). A scheduler in the
+  server fires due ones every 15s, RabbitMQ or not. Kinds:
+  - `claim_check`: a claim with no word for `ARIADNE_CLAIM_TIMEOUT_MINUTES` goes back in the queue,
+    and you get an FYI;
+  - `send`: an event sent later (`schedule_event`, `cancel_scheduled`, `list_scheduled` over MCP).
+- **Overdue:** an assignment with `dueAt` gets one "no report yet" report from Ariadne to its sender
+  (checked by the same scheduler).
 - **Undo:** each timeline item shows what the Analyst changed while handling it, with an Undo button.
   An undo is refused if something changed again since.
 

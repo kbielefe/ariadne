@@ -1,7 +1,7 @@
 // What a runner does with one delivery. Adapters (RabbitMQ, the claude CLI, Jev) are injected.
 import type { Delivery } from '../server/context';
 import type { Answer, InboxMessage } from '../shared/model';
-import { agentPrompt, analystPrompt, ANALYST_SYSTEM, parseAgentOutput } from './prompts';
+import { agentPrompt, parseAgentOutput } from './prompts';
 
 export type Publish = (m: InboxMessage) => Promise<void>;
 
@@ -27,21 +27,6 @@ const decided = (d: Delivery, k: string) => {
   const v = d.event.decisions?.[k]?.value;
   return typeof v === 'string' ? v : undefined;
 };
-
-/** The analyst acts through its MCP tools; the runner only reports failures. */
-export async function handleAnalyst(d: Delivery, run: RunModel, publish: Publish, log: Log): Promise<void> {
-  const me = d.recipient.id;
-  await publish({ type: 'status', sender: me, text: 'Thinking…', eventId: d.event.id });
-  const model = decided(d, 'model');
-  const effort = decided(d, 'effort');
-  const r = await run({ prompt: analystPrompt(d), systemPrompt: ANALYST_SYSTEM, ...(model ? { model } : {}), ...(effort ? { effort } : {}) });
-  await publish({ type: 'status', sender: me, text: '' });
-  if (r.ok) return;
-  log.error('analyst.failed', { eventId: d.event.id, output: r.text.slice(0, 500) });
-  // Tell the user, on their own message if this was one.
-  if (d.event.kind === 'assign' && d.event.state === 'open')
-    await publish({ type: 'report', sender: me, replyTo: d.event.id, closes: false, body: `I couldn't finish this: ${r.text.slice(0, 300) || 'the model run failed'}. Ask again or check the runner log.` });
-}
 
 /** Other agents: the delivery is all they get; their final text is the report. */
 export async function handleAgent(d: Delivery, run: RunModel, publish: Publish, log: Log): Promise<void> {

@@ -1,11 +1,12 @@
 // Moves events between the database and RabbitMQ.
 //   Relay: events with delivery = 'pending' → build the delivery → publish (confirmed) → 'delivered'.
+//          Interactive agents are skipped: they pull their assignments over MCP (server/workmcp.ts).
 //   Inbox: runner messages from ariadne.inbox → Core.receive.
 // With no broker configured, events simply wait as 'pending'.
 import amqp from 'amqplib';
 import { ZodError } from 'zod';
 import { ACTOR_QUEUE_OPTIONS, actorQueue, DELIVER_EXCHANGE, INBOX_QUEUE, INBOX_QUEUE_OPTIONS, PRIORITY } from '../shared/bus';
-import { ANALYST_ID, USER_ID } from '../shared/model';
+import { USER_ID } from '../shared/model';
 import { ContextBuilder, type Delivery } from './context';
 import type { Core } from './core';
 import { withTx } from './db';
@@ -35,7 +36,6 @@ export class Relay {
   start(intervalMs = 3000) {
     this.off = this.core.hub.on('deliver', () => void this.flush());
     this.timers.push(setInterval(() => void this.flush(), intervalMs));
-    this.timers.push(setInterval(() => void this.core.sweepOverdue().catch((e) => this.log.error('overdue.failed', { error: String(e) })), 30_000));
     void this.flush();
   }
 
@@ -72,6 +72,7 @@ export class Relay {
         const r = await tx.query(
           `SELECT e.id FROM events e JOIN nodes n ON n.id = e.recipient
            WHERE e.delivery = 'pending' AND n.kind = 'agent' AND NOT coalesce((n.attrs->>'paused')::boolean, false)
+             AND NOT coalesce((n.attrs->>'interactive')::boolean, false)
            ORDER BY e.created_at LIMIT 20 FOR UPDATE OF e SKIP LOCKED`,
         );
         if (!r.rowCount) return 0;
@@ -82,7 +83,6 @@ export class Relay {
           const priority = ev.sender === USER_ID ? PRIORITY.user : ev.questions ? PRIORITY.decision : PRIORITY.normal;
           await this.publisher.publish(ev.recipient!, d, { messageId: ev.id, priority });
           await tx.query(`UPDATE events SET delivery = 'delivered', delivered_at = now() WHERE id = $1`, [ev.id]);
-          if (ev.recipient === ANALYST_ID) this.core.hub.status({ actor: ANALYST_ID, text: 'Queued', eventId: ev.id });
         }
         return r.rowCount;
       });

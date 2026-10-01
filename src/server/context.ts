@@ -53,6 +53,7 @@ export interface ActorView {
   effort?: unknown;
   decider?: boolean;
   paused?: boolean;
+  interactive?: boolean;
 }
 
 interface Ref {
@@ -101,11 +102,12 @@ export function actorView(n: Node): ActorView {
     ...(a.effort ? { effort: a.effort } : {}),
     ...(a.decider ? { decider: true } : {}),
     ...(a.paused ? { paused: true } : {}),
+    ...(a.interactive ? { interactive: true } : {}),
   };
 }
 
 export class ContextBuilder {
-  private nodes = new Map<string, Node>();
+  readonly nodes = new Map<string, Node>();
   private edges: Edge[] = [];
 
   private constructor(private readonly q: Q) {}
@@ -210,7 +212,11 @@ export class ContextBuilder {
       thread: thread.map((e) => this.eventView(e, 1500)),
       supervisor: sup ? actorView(sup) : null,
       subordinates: this.subordinates(recipient.id).map(actorView),
-      howToReply: recipient.attrs.decider
+      howToReply: recipient.attrs.interactive
+        ? ev.kind === 'assign'
+          ? `When finished, call the submit_result tool with eventId "${ev.id}", a status (done, blocked, question, or progress), a markdown body, and optional proposals (ops).`
+          : 'This is a report. There is nothing to reply to.'
+        : recipient.attrs.decider
         ? `Publish {"type":"report","sender":"${recipient.id}","replyTo":"${ev.id}","body":"","answers":{...}} to ariadne.inbox.`
         : ev.kind === 'assign'
           ? `When finished, publish {"type":"report","sender":"${recipient.id}","replyTo":"${ev.id}","body":"<markdown>","closes":true,"proposals":[<ops>]} to ariadne.inbox. Use closes=false for a progress note or a question.`

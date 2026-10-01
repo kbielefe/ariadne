@@ -1,6 +1,5 @@
-// HTTP for the web UI (and /mcp for the analyst). Your UI edits apply directly and are audited;
+// HTTP for the web UI and /mcp (Claude Code sessions). Both are localhost only, with no authentication. Your UI edits apply directly and are audited;
 // the analyst sees them in its next delivery ("userChanges").
-import { timingSafeEqual } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { USER_ID } from '../shared/model';
@@ -12,7 +11,6 @@ import { who } from './store';
 
 export interface ApiOptions {
   allowedHosts: string[];
-  mcpToken: string;
 }
 
 export function registerApi(app: FastifyInstance, core: Core, o: ApiOptions) {
@@ -104,17 +102,10 @@ export function registerApi(app: FastifyInstance, core: Core, o: ApiOptions) {
     });
   });
 
-  // ---- MCP: the analyst only
-  const expected = Buffer.from(`Bearer ${o.mcpToken}`);
-  const authorized = (req: FastifyRequest) => {
-    const got = Buffer.from(req.headers.authorization ?? '');
-    return got.length === expected.length && timingSafeEqual(got, expected);
-  };
+  // ---- MCP: no token; the Host/Origin guard above keeps it to localhost. Agent-specific permissions come later.
   app.post('/mcp', async (req, reply) => {
-    if (!authorized(req)) return reply.code(401).send({ jsonrpc: '2.0', error: { code: -32001, message: 'Only the Analyst may use MCP' }, id: null });
     reply.hijack();
     await handleMcp(core, req.raw, reply.raw, req.body);
   });
   app.get('/mcp', async (_req, reply) => reply.code(405).header('allow', 'POST').send({ error: 'POST only (stateless)' }));
-
 }

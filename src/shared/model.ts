@@ -53,6 +53,7 @@ export const AgentAttrs = z
     effort: Effort.describe('Default effort level'),
     decider: z.boolean().describe('A System One decider: answers choice/score/noul questions, writes no text'),
     paused: z.boolean().describe('Paused agents get no deliveries; they wait'),
+    interactive: z.boolean().describe('Works in an interactive Claude Code session: claims its events over MCP (next_assignment) instead of RabbitMQ'),
   })
   .partial();
 
@@ -198,7 +199,7 @@ export const Event = z.object({
   state: EventState.nullable(),
   /** assign only: Ariadne tells the sender if no report arrives by then */
   dueAt: z.string().nullable(),
-  delivery: z.enum(['none', 'held', 'pending', 'delivered']),
+  delivery: z.enum(['none', 'held', 'pending', 'claimed', 'delivered']),
   tasks: z.array(Id),
   createdAt: z.string(),
   closedAt: z.string().nullable(),

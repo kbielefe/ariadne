@@ -1,12 +1,10 @@
 // Seeds a small demo into a running Ariadne: you chat, a scripted "analyst" answers over MCP.
 //   ARIADNE_URL=http://127.0.0.1:3100 pnpm tsx scripts/demo.ts
 // Uses the real API and MCP, so it doubles as a smoke test. Don't run it against real data.
-import { readFileSync } from 'node:fs';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
 const base = process.env.ARIADNE_URL ?? 'http://127.0.0.1:3100';
-const token = process.env.ARIADNE_MCP_TOKEN ?? readFileSync(process.env.ARIADNE_MCP_TOKEN_FILE ?? 'secrets/mcp_token', 'utf8').trim();
 
 const post = async (path: string, body: unknown) => {
   const r = await fetch(`${base}${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
@@ -15,7 +13,7 @@ const post = async (path: string, body: unknown) => {
 };
 
 const client = new Client({ name: 'demo-analyst', version: '0' });
-await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), { requestInit: { headers: { authorization: `Bearer ${token}` } } }));
+await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`)));
 async function call<T = Record<string, unknown>>(name: string, args: Record<string, unknown>): Promise<T> {
   const r = await client.callTool({ name, arguments: args });
   if (r.isError) throw new Error(`${name}: ${JSON.stringify(r.content)}`);

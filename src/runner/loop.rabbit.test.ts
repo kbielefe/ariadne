@@ -78,24 +78,16 @@ it('delivers an assignment to an agent runner and records its report', async () 
   expect(report).toMatchObject({ sender: coder, recipient: ANALYST_ID, body: 'Done: openid-client.', proposals: [{ title: 'Write ADR' }], delivery: expect.stringMatching(/pending|delivered/) });
 });
 
-it('puts your messages ahead of agent reports in the analyst queue', async () => {
+it('leaves events for interactive agents (the Analyst) for next_assignment, not RabbitMQ', async () => {
   const conn = await amqp.connect(URL);
   const ch = await conn.createChannel();
   await ch.deleteQueue(actorQueue(ANALYST_ID)).catch(() => {});
   await ch.assertQueue(actorQueue(ANALYST_ID), ACTOR_QUEUE_OPTIONS);
-  const [{ id: coder } = { id: "" }] = await core.ops(who(USER_ID, 'ui'), [
-    { op: 'create_node', ref: 'c', kind: 'agent', title: 'Coder' },
-    { op: 'create_edge', src: '$c', kind: 'reports_to', dst: ANALYST_ID },
-  ]);
-  // An agent report and then your chat are both waiting when the analyst connects.
-  const job = await core.send(who(ANALYST_ID, 'mcp'), { kind: 'assign', recipient: coder!, body: 'x' });
-  await core.receive({ type: 'report', sender: coder!, replyTo: job.id, body: 'report', closes: true });
   const chat = await core.chat('urgent question');
   const publisher = amqpPublisher(URL, log);
   stops.push(() => publisher.close());
-  await new Relay(core, publisher, log).flush();
-  await until(async () => (await ch.checkQueue(actorQueue(ANALYST_ID))).messageCount >= 2);
-  const first = await ch.get(actorQueue(ANALYST_ID), { noAck: true });
-  expect(first && first.properties.messageId).toBe(chat.id);
+  expect(await new Relay(core, publisher, log).flush()).toBe(0);
+  expect((await ch.checkQueue(actorQueue(ANALYST_ID))).messageCount).toBe(0);
+  expect((await s.getEvent(db, chat.id)).delivery).toBe('pending');
   await conn.close();
 });

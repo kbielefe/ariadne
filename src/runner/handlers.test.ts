@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Delivery } from '../server/context';
 import type { InboxMessage } from '../shared/model';
-import { handleAgent, handleAnalyst, handleDecider, jev, type RunOptions } from './handlers';
+import { handleAgent, handleDecider, jev, type RunOptions } from './handlers';
 import { agentPrompt, parseAgentOutput } from './prompts';
 
 const ME = '11111111-1111-4111-8111-111111111111';
@@ -72,13 +72,6 @@ describe('handlers', () => {
     const d = delivery({ kind: 'report', from: 'Junior', id: '44444444-4444-4444-8444-444444444444' });
     await handleAgent(d, async () => ({ ok: true, text: 'Junior finished it.' }), async (m) => void sent.push(m), log);
     expect(sent.at(-1)).toMatchObject({ type: 'report', replyTo: EV, body: 'Junior finished it.' });
-  });
-
-  it('a failed analyst run tells the user on their message', async () => {
-    const sent: InboxMessage[] = [];
-    await handleAnalyst(delivery({ from: 'You (the user)' }), async () => ({ ok: false, text: 'rate limited' }), async (m) => void sent.push(m), log);
-    expect(sent.at(-1)).toMatchObject({ type: 'report', replyTo: EV, closes: false });
-    expect((sent.at(-1) as { body: string }).body).toMatch(/rate limited/);
   });
 
   it('a decider sends the state and questions to Jev and reports its answers', async () => {

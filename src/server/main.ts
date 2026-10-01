@@ -1,7 +1,6 @@
-// Ariadne v2 server: web UI + API + the analyst's MCP + the RabbitMQ relay, in one process.
-import { randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+// Ariadne v2 server: web UI + API + MCP + the scheduler + the RabbitMQ relay, in one process.
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import fastifyStatic from '@fastify/static';
 import Fastify from 'fastify';
 import { registerApi } from './api';
@@ -9,6 +8,7 @@ import { amqpPublisher, consumeInbox, Relay } from './bus';
 import { Core } from './core';
 import { createPool, migrate } from './db';
 import { Hub } from './hub';
+import { startScheduler } from './scheduler';
 
 const env = process.env;
 
@@ -18,18 +18,6 @@ function secret(name: string): string | undefined {
   const file = env[`${name}_FILE`];
   if (file && existsSync(file)) return readFileSync(file, 'utf8').trim() || undefined;
   return undefined;
-}
-
-/** The MCP token: from the environment, or the token file (created on first start). */
-function mcpToken(): string {
-  const existing = secret('ARIADNE_MCP_TOKEN');
-  if (existing) return existing;
-  const file = resolve(env.ARIADNE_MCP_TOKEN_FILE ?? 'secrets/mcp_token');
-  const token = randomBytes(24).toString('hex');
-  mkdirSync(dirname(file), { recursive: true });
-  writeFileSync(file, `${token}\n`, { mode: 0o600 });
-  console.log(`Wrote a new MCP token to ${file}`);
-  return token;
 }
 
 async function main() {
@@ -46,11 +34,11 @@ async function main() {
   if (process.argv.includes('--migrate-only')) return db.end();
 
   const hub = new Hub();
-  const core = new Core(db, hub, { decideTimeoutMs: Number(env.ARIADNE_DECIDE_TIMEOUT_MS ?? 5000) });
+  const core = new Core(db, hub, { decideTimeoutMs: Number(env.ARIADNE_DECIDE_TIMEOUT_MS ?? 5000), claimTimeoutMinutes: Number(env.ARIADNE_CLAIM_TIMEOUT_MINUTES ?? 30) });
   await core.releaseHeld();
 
   const app = Fastify({ logger: { level: env.LOG_LEVEL ?? 'info' }, bodyLimit: 2 * 1024 * 1024 });
-  registerApi(app, core, { allowedHosts, mcpToken: mcpToken() });
+  registerApi(app, core, { allowedHosts });
   const webDir = resolve(env.ARIADNE_WEB_DIR ?? 'dist/web');
   if (existsSync(webDir)) {
     await app.register(fastifyStatic, { root: webDir });
@@ -61,7 +49,7 @@ async function main() {
   }
 
   const log = { info: (m: string, o?: object) => app.log.info(o ?? {}, m), error: (m: string, o?: object) => app.log.error(o ?? {}, m) };
-  const stops: (() => Promise<void> | void)[] = [];
+  const stops: (() => Promise<void> | void)[] = [startScheduler(core, log)];
   if (amqpUrl) {
     const publisher = amqpPublisher(amqpUrl, log);
     const relay = new Relay(core, publisher, log);

@@ -240,6 +240,9 @@ function Attrs({ node: n, save }: { node: Node; save(p: { attrs: Record<string, 
                 <label className="check" title="Answers System One questions (choice / score / yes-no); writes no text">
                   <input type="checkbox" checked={!!a.decider} onChange={(e) => set('decider', e.target.checked || null)} /> System One decider
                 </label>
+                <label className="check" title="Works in an interactive Claude Code session: its events wait until a session claims them over MCP (next_assignment)">
+                  <input type="checkbox" checked={!!a.interactive} onChange={(e) => set('interactive', e.target.checked || null)} /> interactive (Claude Code)
+                </label>
               </div>
             </Section>
           )}

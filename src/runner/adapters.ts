@@ -52,8 +52,6 @@ export interface ClaudeOptions {
   /** Extra arguments for every run: tools, permission mode, sandbox... */
   args: string[];
   cwd: string;
-  /** The analyst's MCP connection. Other agents get none. */
-  mcp?: { url: string; token: string };
   timeoutMs: number;
   log: Log;
 }
@@ -66,12 +64,8 @@ export function claude(o: ClaudeOptions): RunModel {
       if (r.systemPrompt) args.push('--append-system-prompt', r.systemPrompt);
       if (r.model) args.push('--model', r.model);
       if (r.effort) args.push('--effort', r.effort);
-      if (o.mcp) {
-        const config = { mcpServers: { ariadne: { type: 'http', url: o.mcp.url, headers: { Authorization: `Bearer ${o.mcp.token}` } } } };
-        args.push('--mcp-config', JSON.stringify(config), '--strict-mcp-config', '--allowedTools', 'mcp__ariadne');
-      } else {
-        args.push('--strict-mcp-config');
-      }
+      // Headless agents get no MCP servers: their delivery is all they need.
+      args.push('--strict-mcp-config');
       args.push(...o.args);
       const child = spawn(o.command, args, { cwd: o.cwd, stdio: ['ignore', 'pipe', 'pipe'] });
       let stdout = '';

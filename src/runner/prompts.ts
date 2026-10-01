@@ -1,4 +1,4 @@
-// Prompts the runners build from a delivery. Pure functions, so they're easy to test and tune.
+// Prompts built from a delivery: for headless runners, and the briefs next_assignment returns. Pure functions, so they're easy to test and tune.
 import type { Delivery, TaskContext } from '../server/context';
 
 export const ANALYST_SYSTEM = `You are the Analyst inside Ariadne, the user's trusted external memory. The user has
@@ -63,7 +63,7 @@ export function analystPrompt(d: Delivery): string {
 }
 
 /** For other agents: everything in plain markdown. They have no Ariadne tools. */
-export function agentPrompt(d: Delivery): string {
+export function agentPrompt(d: Delivery, answer = fencedAnswer(d)): string {
   const e = d.event;
   const r = d.recipient;
   const briefs = (r.briefs ?? {}) as Record<string, string>;
@@ -87,9 +87,15 @@ export function agentPrompt(d: Delivery): string {
     e.kind === 'report'
       ? section('What to do', `${e.from}, your subordinate, reported (above). Review it. If your own assignment is now complete, your answer is your report to your supervisor; if not, delegate again and use status "blocked".`)
       : '',
-    section(
-      'Your answer',
-      `Your final message is your report, in markdown, to ${e.kind === 'assign' ? e.from : (d.supervisor?.name ?? 'your supervisor')}. Lead with the outcome.
+    section('Your answer', answer),
+  ];
+  return parts.filter(Boolean).join('\n');
+}
+
+/** Headless agents (`claude -p`) end their final message with an optional ```ariadne block. */
+function fencedAnswer(d: Delivery): string {
+  const e = d.event;
+  return `Your final message is your report, in markdown, to ${e.kind === 'assign' ? e.from : (d.supervisor?.name ?? 'your supervisor')}. Lead with the outcome.
 If you want Ariadne's graph changed (new tasks, a repo or build to attach, someone to coordinate with), or you are blocked,
 end with one fenced block:
 
@@ -99,10 +105,21 @@ end with one fenced block:
  "assign": [{"to": "<subordinate id>", "body": "...", "tasks": ["<task id>"]}]}
 \`\`\`
 
-"done" finishes the assignment; "blocked" and "question" keep it open. Omit what you don't need.`,
-    ),
-  ];
-  return parts.filter(Boolean).join('\n');
+"done" finishes the assignment; "blocked" and "question" keep it open. Omit what you don't need.`;
+}
+
+/** For an interactive Claude Code session that pulled the assignment over MCP: it reports with submit_result. */
+export function interactivePrompt(d: Delivery): string {
+  const e = d.event;
+  return agentPrompt(
+    d,
+    `Do the work here, in this session. When you're finished (or blocked, or need an answer), call submit_result with
+eventId "${e.id}" and a markdown body for ${e.from} that leads with the outcome. status: "done" finishes the
+assignment; "blocked", "question", and "progress" keep it open. If Ariadne's graph should change (new tasks, a repo or
+build to attach, someone to coordinate with), add proposals: the same ops as apply_ops, for example
+[{"op": "create_node", "ref": "t1", "kind": "task", "title": "..."}, {"op": "create_edge", "src": "<task id>", "kind": "needs", "dst": "$t1"}].
+If you can't work on it here after all, call release_assignment so it goes back in the queue.`,
+  );
 }
 
 export interface AgentOutcome {
