@@ -84,6 +84,6 @@ INSERT INTO nodes (id, kind, title, body, attrs) VALUES
   ('00000000-0000-4000-8000-000000000001', 'person', 'You', 'The person using this Ariadne.', '{}'),
   ('00000000-0000-4000-8000-000000000002', 'agent', 'Analyst',
    'Takes assignments from you, keeps the graph up to date, delegates to subordinates, and brings you only what needs you.',
-   '{"models": ["opus"], "effort": "high"}');
+   '{"models": ["opus"], "effort": "medium"}');
 INSERT INTO edges (src, kind, dst) VALUES
   ('00000000-0000-4000-8000-000000000002', 'reports_to', '00000000-0000-4000-8000-000000000001');

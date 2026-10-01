@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Dev loop without Compose: the server (port 3100) and, optionally, the analyst runner, against
+# scripts/dev-db.sh and scripts/dev-rabbit.sh. Logs and pids go to var/dev/. Stop: scripts/dev-up.sh stop
+set -euo pipefail
+cd "$(dirname "$0")/.."
+mkdir -p var/dev
+stop() { for f in var/dev/*.pid; do [ -f "$f" ] && kill "$(cat "$f")" 2>/dev/null || true; rm -f "$f"; done; }
+if [ "${1:-}" = stop ]; then stop; exit 0; fi
+stop
+export DATABASE_URL=${DATABASE_URL:-postgres://ariadne:ariadne-dev@127.0.0.1:55433/ariadne_dev}
+export ARIADNE_AMQP_URL=${ARIADNE_AMQP_URL:-amqp://ariadne:ariadne-dev@127.0.0.1:5673/ariadne}
+nohup node --import tsx src/server/main.ts > var/dev/server.log 2>&1 & echo $! > var/dev/server.pid
+for _ in $(seq 1 30); do curl -fs http://127.0.0.1:3100/health/ready >/dev/null && break; sleep 0.5; done
+echo "server: http://127.0.0.1:3100 (log var/dev/server.log)"
+if [ "${1:-}" = analyst ]; then
+  mkdir -p var/dev/analyst-cwd
+  AGENT_CWD=$PWD/var/dev/analyst-cwd nohup node --import tsx src/runner/main.ts analyst > var/dev/analyst.log 2>&1 & echo $! > var/dev/analyst.pid
+  echo "analyst runner started (log var/dev/analyst.log)"
+fi

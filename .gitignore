@@ -6,3 +6,4 @@ secrets/
 coverage/
 test-results/
 playwright-report/
+var/

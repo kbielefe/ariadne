@@ -1,0 +1,92 @@
+# Ariadne v2: local, single-user stack for rootless Podman Compose. Runs next to v1 (ports differ).
+#   podman compose up -d        Open http://127.0.0.1:3100
+# No authentication on the web UI: loopback only. /mcp needs the analyst's token (secrets/mcp_token).
+name: ariadne2
+
+x-podman:
+  in_pod: false
+
+services:
+  app:
+    image: localhost/ariadne2:${ARIADNE_VERSION:-0.2.0}
+    build:
+      context: .
+      dockerfile: Containerfile
+    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+    environment:
+      DATABASE_URL: postgres://ariadne:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/ariadne
+      ARIADNE_AMQP_URL: amqp://ariadne:${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}@rabbitmq:5672/ariadne
+      ARIADNE_MCP_TOKEN_FILE: /run/secrets/mcp_token
+      ARIADNE_LISTEN_HOST: 0.0.0.0
+      ARIADNE_LISTEN_PORT: "3100"
+      ARIADNE_ALLOWED_HOSTS: 127.0.0.1:${ARIADNE_PORT:-3100},localhost:${ARIADNE_PORT:-3100}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    secrets: [mcp_token]
+    # The 0600 token file is yours on the host; map you to the image's node user to read it.
+    userns_mode: "keep-id:uid=1000,gid=1000"
+    ports:
+      - "127.0.0.1:${ARIADNE_PORT:-3100}:3100"
+    networks: [frontend, backend]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3100/health/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+
+  postgres:
+    image: artifactory.adtran.com/docker/postgres:17.6-alpine@sha256:747d5ed1fdeeb124b880fbe3d7c6557d2c4064ae41d6b6297d417882effce4be
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ariadne
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ariadne
+    volumes: [postgres_data:/var/lib/postgresql/data]
+    networks: [backend]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ariadne -d ariadne"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # Runners on this machine connect on loopback.
+  rabbitmq:
+    image: artifactory.adtran.com/docker/rabbitmq:4.1.4-alpine@sha256:b736d649308e1b3e1a116c3f36986b605ee3d03e88f10166be2900083d2e63f2
+    restart: unless-stopped
+    hostname: rabbitmq
+    user: rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: ariadne
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}
+      RABBITMQ_DEFAULT_VHOST: ariadne
+      RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: -rabbit log [{console,[{level,warning}]}]
+    volumes: [rabbitmq_data:/var/lib/rabbitmq]
+    ports:
+      - "127.0.0.1:${RABBITMQ_PORT:-5674}:5672"
+    networks: [frontend, backend]
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 20s
+
+networks:
+  frontend: {}
+  backend: { internal: true }
+
+volumes:
+  postgres_data: {}
+  rabbitmq_data: {}
+
+secrets:
+  mcp_token:
+    file: ./secrets/mcp_token
+    x-podman.relabel: Z
