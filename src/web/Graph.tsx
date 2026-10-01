@@ -314,7 +314,7 @@ function Canvas({ elements, selected, onSelect, onFocus }: { elements: ElementDe
   const shape = useRef('');
 
   useEffect(() => {
-    const c = cytoscape({ container: box.current!, style: styles(), wheelSensitivity: 0.3, minZoom: 0.15, maxZoom: 2.5, boxSelectionEnabled: false });
+    const c = cytoscape({ container: box.current!, style: styles(), wheelSensitivity: 1.5, minZoom: 0.15, maxZoom: 2.5, boxSelectionEnabled: false });
     c.on('tap', 'node', (e) => handlers.current.onSelect(e.target.id()));
     c.on('tap', (e) => {
       if (e.target === c) handlers.current.onSelect(null);
