@@ -1,0 +1,48 @@
+{
+  "name": "ariadne",
+  "private": true,
+  "version": "0.2.0",
+  "description": "Ariadne v2: a task graph and an augmented chat for working with people, teams, and agents",
+  "type": "module",
+  "packageManager": "pnpm@10.34.5",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "tsx watch src/server/main.ts",
+    "dev:web": "vite",
+    "build": "vite build && node scripts/build-node.mjs",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "runner": "tsx src/runner/main.ts",
+    "dev:db": "scripts/dev-db.sh"
+  },
+  "dependencies": {
+    "@fastify/static": "^8.3.0",
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "amqplib": "^2.0.1",
+    "fastify": "^5.12.5",
+    "pg": "^8.23.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/cytoscape-dagre": "^2.3.4",
+    "@types/node": "^24.13.5",
+    "@types/pg": "^8.23.1",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^5.2.0",
+    "cytoscape": "^3.34.3",
+    "cytoscape-dagre": "^4.0.1",
+    "esbuild": "^0.28.2",
+    "lucide-react": "^1.47.0",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
+    "tsx": "^4.23.13",
+    "typescript": "^6.0.3",
+    "vite": "^7.3.6",
+    "vitest": "^4.1.11"
+  }
+}
