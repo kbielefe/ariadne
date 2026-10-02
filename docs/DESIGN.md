@@ -64,6 +64,7 @@ edited but not deleted.
 | Context, repos, Jenkins | Nearby resources | `uses` edges |
 | On receiving an assignment / returning results | The recipient's `briefs.onAssignment` / `onReport` + the event's `instructions` | — |
 | On assigning / receiving results | The assigner's `briefs.onDelegate` / `onReview` | — |
+| When to stop (run-until) | What the user said ("until the branch is ready for PR"), via `assign`'s `until` | The assign event's `decisions.until`; the brief says to keep going without asking until it's met, or until blocked or a decision is needed |
 
 Each entry in `decisions` records `by` (jev / analyst / default / user) and `confidence`.
 

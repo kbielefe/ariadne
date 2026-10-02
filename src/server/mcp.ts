@@ -119,12 +119,13 @@ const tools: Tool[] = [
       tasks: z.array(z.uuid()).describe('Tasks this assignment is about'),
       body: z.string().min(1).describe('What to do, in markdown'),
       instructions: z.string().optional().describe('How to do it / how to report back, for this assignment only'),
+      until: z.string().optional().describe('When to stop: keep working without asking until this is met (or blocked, or a decision is needed). E.g. "through the ready subtasks of X, committing between tasks, until the branch is ready for a PR"'),
       model: z.string().optional(),
       effort: Effort.optional(),
       dueInMinutes: z.number().positive().optional().describe('You get a report from Ariadne if nothing arrives by then'),
       because,
     }),
-    run: async (core, a: { to: string; tasks: string[]; body: string; instructions?: string; model?: string; effort?: string; dueInMinutes?: number }, b) =>
+    run: async (core, a: { to: string; tasks: string[]; body: string; instructions?: string; until?: string; model?: string; effort?: string; dueInMinutes?: number }, b) =>
       core.send(who(ANALYST_ID, 'mcp', b), {
         kind: 'assign',
         recipient: a.to,
@@ -132,6 +133,7 @@ const tools: Tool[] = [
         body: a.body,
         instructions: a.instructions ?? '',
         decisions: {
+          ...(a.until ? { until: { value: a.until, by: 'analyst' } } : {}),
           ...(a.model ? { model: { value: a.model, by: 'analyst' } } : {}),
           ...(a.effort ? { effort: { value: a.effort, by: 'analyst' } } : {}),
         },

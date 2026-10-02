@@ -46,6 +46,12 @@ describe('agent prompts', () => {
     expect(p).toContain('- agent-framework [repo] https://github.com/x/y');
   });
 
+  it('say when to stop, only when the assignment has a run-until policy', () => {
+    expect(agentPrompt(delivery())).not.toContain('Keep going until');
+    const p = agentPrompt(delivery({ decisions: { until: { value: 'The branch is ready for a PR', by: 'analyst' } } }));
+    expect(p).toContain('## Keep going until\n\nThe branch is ready for a PR');
+  });
+
   it('parse the optional ariadne block', () => {
     expect(parseAgentOutput('All good.')).toEqual({ body: 'All good.', closes: true });
     expect(parseAgentOutput('Need the RBAC answer.\n\n```ariadne\n{"status":"blocked","proposals":[{"op":"create_node","kind":"task","title":"Ask Bryan"}]}\n```')).toEqual({

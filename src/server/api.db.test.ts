@@ -230,3 +230,23 @@ describe('web API', () => {
     expect(hist).toMatchObject([{ who: 'You (the user)', line: 'created task "Mine"' }]);
   });
 });
+
+describe('briefs', () => {
+  it('carry the run-until policy set when assigning', async () => {
+    const [agent, , task] = (
+      await core.ops(who(USER_ID, 'ui'), [
+        { op: 'create_node', ref: 'cc', kind: 'agent', title: 'Coder', attrs: { interactive: true } },
+        { op: 'create_edge', src: '$cc', kind: 'reports_to', dst: ANALYST_ID },
+        { op: 'create_node', ref: 't', kind: 'task', title: 'Add claims' },
+      ])
+    ).map((x) => x.id) as string[];
+    const client = await mcp();
+    const until = 'Through the ready subtasks, committing between tasks, until the branch is ready for a PR';
+    const { id } = await call<{ id: string }>(client, 'assign', { to: agent!, tasks: [task!], body: 'Add claims', until });
+    expect((await s.getEvent(db, id)).decisions.until).toEqual({ value: until, by: 'analyst' });
+    const { brief } = await call<{ brief: string }>(client, 'claim_assignment', { eventId: id });
+    expect(brief).toContain(`## Keep going until\n\n${until}`);
+    expect(brief).toContain("Don't stop to ask whether to continue");
+    await client.close();
+  });
+});

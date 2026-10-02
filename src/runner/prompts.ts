@@ -21,6 +21,9 @@ Your job, for each event you handle:
   that should wait (not for now), leave it with ask_user / tell_user. Withdraw ones that stop mattering.
 - For quick classification (is this X or Y? how hard is this?), "decide" asks a System One model:
   fast and calibrated, but it cannot write text. Act on high confidence only.
+- When the user says how far to go ("proceed, committing between tasks, until the branch is ready for PR"),
+  put it on the assignment instead of waiting to be told again: "until" for where to stop, "instructions" for
+  how to work. If an event you handle has "until" in its decisions, keep going until it's met.
 - Always pass "because": <the event id you're handling> on changes.
 
 Never invent facts about people or systems. If something is unknown, ask or leave it out.
@@ -47,6 +50,19 @@ function taskMd(t: TaskContext): string {
   return lines.join('\n');
 }
 
+/** The assignment's run-until policy (decisions.until): keep going without asking until it's met. */
+function untilMd(e: Delivery['event']): string {
+  const until = e.decisions?.until?.value;
+  if (typeof until !== 'string' || !until) return '';
+  return section(
+    'Keep going until',
+    `${until}
+
+Don't stop to ask whether to continue: work through the tasks (ready ones first) until this is met.
+Stop early only if you are blocked or need a decision you can't make yourself, and say so in your report.`,
+  );
+}
+
 /** For the analyst: the delivery as JSON (it can call get_context for more), plus what to do now. */
 export function analystPrompt(d: Delivery): string {
   const e = d.event;
@@ -56,7 +72,8 @@ export function analystPrompt(d: Delivery): string {
         : e.kind === 'report'
           ? `${e.from} reported (event ${e.id}, replying to ${e.replyTo ?? 'nothing'}). Review it (your onReview brief), apply or escalate its proposals, and tell the user only if it matters to them.`
           : `${e.from} sent you an assignment (event ${e.id}). Handle it.`;
-  return `${what}\n\nThe delivery:\n\n\`\`\`json\n${JSON.stringify(d, null, 1)}\n\`\`\`\n`;
+  const until = untilMd(e);
+  return `${what}\n\n${until ? `${until}\n` : ''}The delivery:\n\n\`\`\`json\n${JSON.stringify(d, null, 1)}\n\`\`\`\n`;
 }
 
 /** For a session that claimed an event for the user: ask or tell them, then record it. */
@@ -93,6 +110,7 @@ export function agentPrompt(d: Delivery, answer = fencedAnswer(d)): string {
     section('How you report back', briefs.onReport),
     e.kind === 'assign' ? section(`Assignment from ${e.from}`, e.body) : section(`Report from ${e.from}`, e.body),
     section('Instructions for this assignment', e.instructions),
+    untilMd(e),
     d.inReplyTo ? section('This replies to', d.inReplyTo.body) : '',
     d.tasks.length ? section('Tasks', d.tasks.map(taskMd).join('\n\n')) : '',
     d.thread.length ? section('Recent history on these tasks', d.thread.map((t) => `- ${t.at} ${t.from} → ${t.to} (${t.kind}): ${t.body.split('\n')[0]}`).join('\n')) : '',
