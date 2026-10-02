@@ -68,3 +68,12 @@ export function readiness(task: Node, edges: readonly Edge[], byId: ReadonlyMap<
 export function wouldCycle(edges: readonly Edge[], kind: EdgeKind, src: string, dst: string): boolean {
   return src === dst || reachable(edges, dst, { kinds: [kind] }).has(src);
 }
+
+// A decision is a line in a node's body, by convention `**Decision (Karl, 2026-10-02):** text`
+// (optionally a list item). store.ts has the same pattern in SQL.
+const DECISION_LINE = /^[ \t]*(?:[-*][ \t]+)?\*\*Decision\b.*$/;
+
+export const isDecisionLine = (line: string): boolean => DECISION_LINE.test(line);
+
+/** The decision lines in a body, trimmed. */
+export const decisionLines = (body: string): string[] => body.split('\n').filter(isDecisionLine).map((l) => l.trim());

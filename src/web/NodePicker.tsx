@@ -2,8 +2,9 @@ import { useMemo, useRef, useState } from 'react';
 import type { Node, NodeKind } from '../shared/model';
 import { useApp } from './App';
 import { KindIcon } from './bits';
+import { type Match, matchNodes } from './match';
 
-/** A small search box over the graph's nodes. */
+/** A small search box over the graph's nodes: titles, then body text (decision lines are labelled). */
 export function NodePicker(p: { placeholder: string; kinds?: NodeKind[]; exclude?: string[]; onPick(n: Node): void; autoFocus?: boolean }) {
   const { graph } = useApp();
   const [q, setQ] = useState('');
@@ -11,13 +12,10 @@ export function NodePicker(p: { placeholder: string; kinds?: NodeKind[]; exclude
   const [hi, setHi] = useState(0);
   const input = useRef<HTMLInputElement>(null);
   const matches = useMemo(() => {
-    const needle = q.trim().toLowerCase();
-    return graph.nodes
-      .filter((n) => (!p.kinds || p.kinds.includes(n.kind)) && !p.exclude?.includes(n.id) && (!needle || n.title.toLowerCase().includes(needle)))
-      .sort((a, b) => Number(a.status === 'open' ? 0 : a.status ? 1 : 0) - Number(b.status === 'open' ? 0 : b.status ? 1 : 0))
-      .slice(0, 12);
+    const nodes = graph.nodes.filter((n) => (!p.kinds || p.kinds.includes(n.kind)) && !p.exclude?.includes(n.id));
+    return matchNodes(nodes, q).slice(0, 12);
   }, [graph, q, p.kinds, p.exclude]);
-  const pick = (n: Node) => {
+  const pick = ({ node: n }: Match) => {
     p.onPick(n);
     setQ('');
     setOpen(false);
@@ -48,9 +46,17 @@ export function NodePicker(p: { placeholder: string; kinds?: NodeKind[]; exclude
       />
       {open && matches.length > 0 && (
         <ul className="picker-list" role="listbox">
-          {matches.map((n, i) => (
-            <li key={n.id} role="option" aria-selected={i === hi} className={i === hi ? 'hi' : ''} onMouseDown={() => pick(n)}>
-              <KindIcon kind={n.kind} /> <span className={n.status && n.status !== 'open' ? 'closed' : ''}>{n.title}</span>
+          {matches.map((m, i) => (
+            <li key={m.node.id} role="option" aria-selected={i === hi} className={i === hi ? 'hi' : ''} onMouseDown={() => pick(m)}>
+              <KindIcon kind={m.node.kind} />
+              <span className="picker-text">
+                <span className={m.node.status && m.node.status !== 'open' ? 'closed' : ''}>{m.node.title}</span>
+                {m.line && (
+                  <span className="picker-line">
+                    {m.decision && <span className="tag">Decision</span>} {m.line}
+                  </span>
+                )}
+              </span>
             </li>
           ))}
         </ul>

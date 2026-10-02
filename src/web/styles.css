@@ -321,6 +321,18 @@ code,
 .picker-list li.hi {
   background: var(--accent-soft);
 }
+.picker-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.picker-line {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 /* ---------------------------------------------------------------- markdown */
 .md > :first-child {

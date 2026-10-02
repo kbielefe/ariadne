@@ -168,13 +168,17 @@ Claude Code sessions ──MCP (/mcp)──► server     the Analyst, and inter
 - **Overdue:** an assignment with `dueAt` gets one "no report yet" report from Ariadne to its sender
   (checked by the same scheduler).
 - **Undo:** `history` (grouped by changeset, filterable by the event a change was made `because`
-  of) and `undo` over MCP. An undo is refused if something changed again since.
+  of) and `undo` over MCP. An undo is refused if something changed again since. In the UI, a
+  delete shows a short "Deleted … Undo" message (`/api/ops` returns its changeset; `POST /api/undo`).
+  A fuller history view is still to be designed.
 
 ## 6. Screens
 
 - **Graph** (the only screen): all nodes and edges with filters (kinds, hide closed) and **focus**: pick a node to see
   what's reachable from it (down / up / both, with a depth). A side panel creates, edits, and deletes
   nodes, edges, and events.
+- **Search:** the pickers (focus, add edge) match titles first, then body text, showing the matching
+  line; decision lines are labelled, so typing "decision" lists them.
 - **Focus:** the focus task in the top bar is remembered across reloads. While focused, a **Show all** button on
   the canvas returns to the full graph.
 - **Order:** a control in the left sidebar sets how side-by-side nodes are ordered in the layout: ready first,

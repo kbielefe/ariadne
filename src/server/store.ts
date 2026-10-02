@@ -87,12 +87,9 @@ export async function findNode(q: Q, id: string): Promise<Node | null> {
 }
 
 // A decision is a line in a node's body, by convention `**Decision (Karl, 2026-10-02):** text`
-// (optionally a list item). The same pattern in PostgreSQL (newline-sensitive) and JavaScript.
+// (optionally a list item). The same pattern as decisionLines (shared/graph.ts), in PostgreSQL (newline-sensitive).
 const DECISION_SQL = String.raw`(?n)^[ \t]*([-*][ \t]+)?\*\*Decision\y`;
-const DECISION_LINE = /^[ \t]*(?:[-*][ \t]+)?\*\*Decision\b.*$/gm;
-
-/** The decision lines in a body, trimmed. */
-export const decisionLines = (body: string): string[] => (body.match(DECISION_LINE) ?? []).map((l) => l.trim());
+export { decisionLines } from '../shared/graph';
 
 export async function listNodes(q: Q, f: { kind?: string; query?: string; status?: string; decisions?: boolean; limit?: number } = {}): Promise<Node[]> {
   const where: string[] = [];
