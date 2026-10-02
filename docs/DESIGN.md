@@ -51,6 +51,11 @@ assigned to (open assignments), and whether it's a root.
 **Inheritance:** a task's context includes the guidance, resources, and `involves` people of every
 task that (transitively) needs it. Attach a repo to a root task once, and all its subtasks get it.
 
+**Decisions** (yours or anyone's) are lines in the body of the task they shape:
+`**Decision (Karl, 2026-10-02):** skip signing for now`. No table or node kind: the sidebar shows
+them with the body, and MCP `search` with `decisions: true` finds only nodes that have them and returns
+the lines. The Analyst's instructions say to record them this way.
+
 **Well-known actors:** *You* (`…0001`) and *Analyst* (`…0002`, which reports to you). They can be
 edited but not deleted.
 

@@ -86,12 +86,21 @@ export async function findNode(q: Q, id: string): Promise<Node | null> {
   return r.rows[0] ? mapNode(r.rows[0]) : null;
 }
 
-export async function listNodes(q: Q, f: { kind?: string; query?: string; status?: string; limit?: number } = {}): Promise<Node[]> {
+// A decision is a line in a node's body, by convention `**Decision (Karl, 2026-10-02):** text`
+// (optionally a list item). The same pattern in PostgreSQL (newline-sensitive) and JavaScript.
+const DECISION_SQL = String.raw`(?n)^[ \t]*([-*][ \t]+)?\*\*Decision\y`;
+const DECISION_LINE = /^[ \t]*(?:[-*][ \t]+)?\*\*Decision\b.*$/gm;
+
+/** The decision lines in a body, trimmed. */
+export const decisionLines = (body: string): string[] => (body.match(DECISION_LINE) ?? []).map((l) => l.trim());
+
+export async function listNodes(q: Q, f: { kind?: string; query?: string; status?: string; decisions?: boolean; limit?: number } = {}): Promise<Node[]> {
   const where: string[] = [];
   const args: unknown[] = [];
   if (f.kind) where.push(`kind = $${args.push(f.kind)}`);
   if (f.status) where.push(`status = $${args.push(f.status)}`);
   if (f.query) where.push(`(title ILIKE $${args.push(`%${f.query}%`)} OR body ILIKE $${args.length})`);
+  if (f.decisions) where.push(`body ~ $${args.push(DECISION_SQL)}`);
   const sql = `SELECT * FROM nodes ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY updated_at DESC LIMIT ${Math.min(f.limit ?? 1000, 5000)}`;
   return (await q.query(sql, args)).rows.map(mapNode);
 }
