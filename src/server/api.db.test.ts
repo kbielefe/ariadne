@@ -91,6 +91,27 @@ describe('MCP', () => {
   });
 });
 
+describe('decisions', () => {
+  it('search with decisions: true finds decision lines in bodies, and only those nodes', async () => {
+    await core.ops(who(ANALYST_ID, 'mcp'), [
+      { op: 'create_node', kind: 'task', title: 'Sign builds', body: 'Context.\n\n**Decision (Karl, 2026-10-01):** skip signing for now.\n\nMore.' },
+      { op: 'create_node', kind: 'task', title: 'Versioning', body: '- **Decision (Karl):** Jenkins sets the version.\n  **Decision:** DECISION_LOG_URL is optional' },
+      { op: 'create_node', kind: 'task', title: 'Talks about it', body: 'We need a **Decision (Karl):** soon, mid-line.' },
+      { op: 'create_node', kind: 'task', title: 'No decision', body: 'Nothing decided.' },
+    ]);
+    const client = await mcp();
+    const found = await call<{ items: { title: string; decisions: string[] }[] }>(client, 'search', { decisions: true });
+    expect(Object.fromEntries(found.items.map((n) => [n.title, n.decisions]))).toEqual({
+      'Sign builds': ['**Decision (Karl, 2026-10-01):** skip signing for now.'],
+      Versioning: ['- **Decision (Karl):** Jenkins sets the version.', '**Decision:** DECISION_LOG_URL is optional'],
+    });
+    expect((await call<{ items: { title: string }[] }>(client, 'search', { decisions: true, query: 'jenkins' })).items.map((n) => n.title)).toEqual(['Versioning']);
+    // Without the filter, results don't carry a decisions field.
+    expect((await call<{ items: Record<string, unknown>[] }>(client, 'search', { query: 'Sign' })).items[0]).not.toHaveProperty('decisions');
+    await client.close();
+  });
+});
+
 describe('claims', () => {
   it('lists what is waiting, claims each item once, and takes results whatever the claim state', async () => {
     const [agent, , , sub, loose] = (

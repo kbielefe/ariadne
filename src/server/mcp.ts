@@ -21,6 +21,10 @@ Ariadne holds a graph (tasks, people, agents, teams, resources; edges needs/uses
 and a log of events (assign / report). Every tool call is audited and can be undone by the user.
 Pass "because" = the id of the event you are handling, so your changes are grouped under it.
 
+Decisions: when the user (or anyone) makes a decision about a task, record it in that task's body as its own line,
+"**Decision (Name, YYYY-MM-DD):** what was decided, and why in a few words" (update_node; keep the rest of the body).
+Put it on the task it shapes. search with decisions: true finds them; check there before re-asking the user.
+
 ${WORK_INSTRUCTIONS}`;
 
 type Handler = (core: Core, args: never, because: string | null) => Promise<unknown>;
@@ -56,11 +60,24 @@ const tools: Tool[] = [
   },
   {
     name: 'search',
-    description: 'Find nodes by text (title or body), kind, and task status. Newest changes first.',
-    input: z.object({ query: z.string().optional(), kind: NodeKind.optional(), status: TaskStatus.optional(), limit: z.number().int().max(200).optional() }),
+    description: 'Find nodes by text (title or body), kind, and task status. Newest changes first. decisions: true finds only nodes that record a decision (a "**Decision (Who, date):**" line in the body) and returns those lines.',
+    input: z.object({
+      query: z.string().optional(),
+      kind: NodeKind.optional(),
+      status: TaskStatus.optional(),
+      decisions: z.boolean().optional().describe('Only nodes with decision lines; each result lists them'),
+      limit: z.number().int().max(200).optional(),
+    }),
     readOnly: true,
-    run: async (core, a: { query?: string; kind?: string; status?: string; limit?: number }) =>
-      (await s.listNodes(core.db, { ...a, limit: a.limit ?? 50 })).map((n) => ({ id: n.id, kind: n.kind, title: n.title, status: n.status, attrs: n.attrs })),
+    run: async (core, a: { query?: string; kind?: string; status?: string; decisions?: boolean; limit?: number }) =>
+      (await s.listNodes(core.db, { ...a, limit: a.limit ?? 50 })).map((n) => ({
+        id: n.id,
+        kind: n.kind,
+        title: n.title,
+        status: n.status,
+        attrs: n.attrs,
+        ...(a.decisions ? { decisions: s.decisionLines(n.body) } : {}),
+      })),
   },
   {
     name: 'graph',
