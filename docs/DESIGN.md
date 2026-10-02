@@ -162,4 +162,7 @@ Claude Code sessions ──MCP (/mcp)──► server     the Analyst, and inter
 - **Graph** (the only screen): all nodes and edges with filters (kinds, hide closed) and **focus**: pick a node to see
   what's reachable from it (down / up / both, with a depth). A side panel creates, edits, and deletes
   nodes, edges, and events.
-- **Focus:** the focus task in the top bar is remembered across reloads.
+- **Focus:** the focus task in the top bar is remembered across reloads. While focused, a **Show all** button on
+  the canvas returns to the full graph.
+- **Shown list:** the left sidebar lists the nodes on the canvas (click selects, double-click focuses), sorted
+  ready first, recently updated, recently created, or by title. The choice is remembered.

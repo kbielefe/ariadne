@@ -1,9 +1,9 @@
 import cytoscape, { type Core as Cy, type ElementDefinition } from 'cytoscape';
 import dagre from 'cytoscape-dagre';
-import { Crosshair, Maximize, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Plus } from 'lucide-react';
+import { ArrowDownUp, Crosshair, Expand, Maximize, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Plus } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { type Direction, readiness, reachable } from '../shared/graph';
-import { EDGE_RULES, type EdgeKind, EdgeKind as EdgeKinds, type NodeKind, USER_ID } from '../shared/model';
+import { EDGE_RULES, type Edge, type EdgeKind, EdgeKind as EdgeKinds, type Node, type NodeKind, USER_ID } from '../shared/model';
 import { remember } from './api';
 import { useApp } from './App';
 import { KindIcon } from './bits';
@@ -24,6 +24,38 @@ interface Filters {
 
 const DEFAULT_FILTERS: Filters = { kinds: NODE_KINDS, edges: [...EdgeKinds.options], showClosed: false, showAssigned: true, direction: 'down', depth: 0 };
 
+/** How the node list in the left sidebar is ordered. */
+const SORTS = {
+  status: 'Ready first',
+  updated: 'Recently updated',
+  created: 'Recently created',
+  title: 'Title (A–Z)',
+} as const;
+type Sort = keyof typeof SORTS;
+
+function loadSort(): Sort {
+  const s = remember.get('graphSort');
+  return s && s in SORTS ? (s as Sort) : 'status';
+}
+
+/** Ready tasks, then waiting, then other kinds, then done and dropped. */
+function rank(n: Node, edges: readonly Edge[], byId: ReadonlyMap<string, Node>): number {
+  if (n.kind !== 'task') return 2;
+  if (n.status === 'open') return readiness(n, edges, byId).ready ? 0 : 1;
+  return 3;
+}
+
+function sortNodes(nodes: Node[], sort: Sort, edges: readonly Edge[], byId: ReadonlyMap<string, Node>): Node[] {
+  const byTitle = (a: Node, b: Node) => a.title.localeCompare(b.title);
+  const cmp: Record<Sort, (a: Node, b: Node) => number> = {
+    title: byTitle,
+    updated: (a, b) => b.updatedAt.localeCompare(a.updatedAt) || byTitle(a, b),
+    created: (a, b) => b.createdAt.localeCompare(a.createdAt) || byTitle(a, b),
+    status: (a, b) => rank(a, edges, byId) - rank(b, edges, byId) || byTitle(a, b),
+  };
+  return [...nodes].sort(cmp[sort]);
+}
+
 function loadFilters(): Filters {
   try {
     return { ...DEFAULT_FILTERS, ...JSON.parse(remember.get('graphFilters') ?? '{}') };
@@ -36,6 +68,11 @@ export function GraphView({ selected, onSelect }: { selected: string | null; onS
   const { graph, byId, focus, setFocus } = useApp();
   const [f, setF] = useState<Filters>(loadFilters);
   const [creating, setCreating] = useState(false);
+  const [sort, setSortState] = useState<Sort>(loadSort);
+  const setSort = (x: Sort) => {
+    setSortState(x);
+    remember.set('graphSort', x);
+  };
   const [panes, setPanes] = useState<Panes>(() => {
     try {
       return { ...DEFAULT_PANES, ...JSON.parse(remember.get('graphPanes') ?? '{}') };
@@ -94,6 +131,11 @@ export function GraphView({ selected, onSelect }: { selected: string | null; onS
   }, [graph, byId, f, focus]);
 
   const counts = useMemo(() => ({ shown: elements.filter((e) => e.group === 'nodes').length, total: graph.nodes.length }), [elements, graph]);
+  // The nodes on the canvas, as a list.
+  const listed = useMemo(() => {
+    const shown = elements.filter((e) => e.group === 'nodes').map((e) => byId.get(e.data.id!)!);
+    return sortNodes(shown, sort, graph.edges, byId);
+  }, [elements, sort, graph, byId]);
 
   return (
     <div className={`graph-view ${dragging ? 'dragging' : ''}`} style={{ gridTemplateColumns: `${panes.filters ? `${panes.filtersW}px` : '0px'} 1fr ${panes.details ? `${panes.detailsW}px` : '0px'}` }}>
@@ -142,6 +184,27 @@ export function GraphView({ selected, onSelect }: { selected: string | null; onS
         <p className="muted small">
           {counts.shown} of {counts.total} shown. Click to select, double-click to focus.
         </p>
+        <fieldset>
+          <legend>
+            <ArrowDownUp size={12} /> Shown
+          </legend>
+          <select value={sort} onChange={(e) => setSort(e.target.value as Sort)} aria-label="Sort the list">
+            {Object.entries(SORTS).map(([k, label]) => (
+              <option key={k} value={k}>
+                {label}
+              </option>
+            ))}
+          </select>
+          <ul className="node-list">
+            {listed.map((n) => (
+              <li key={n.id}>
+                <button className={`node-row ${n.id === selected ? 'on' : ''} ${n.kind === 'task' && n.status !== 'open' ? 'closed' : ''}`} aria-current={n.id === selected || undefined} title={n.title} onClick={() => onSelect(n.id)} onDoubleClick={() => setFocus(n.id)}>
+                  <KindIcon kind={n.kind} /> <span>{n.title}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </fieldset>
       </aside>
       <div className="canvas-wrap">
         <Canvas elements={elements} selected={selected} onSelect={onSelect} onFocus={setFocus} />
@@ -159,6 +222,11 @@ export function GraphView({ selected, onSelect }: { selected: string | null; onS
           >
             <Plus size={16} /> New
           </button>
+          {focus && (
+            <button className="btn on" title="Clear the focus and show the whole graph" onClick={() => setFocus(null)}>
+              <Expand size={16} /> Show all
+            </button>
+          )}
         </div>
         {panes.filters && <ResizeHandle side="left" label="Resize filters" width={panes.filtersW} min={160} max={420} fallback={DEFAULT_PANES.filtersW} onChange={(filtersW) => setPane({ filtersW })} onDrag={setDragging} />}
         {panes.details && <ResizeHandle side="right" label="Resize details" width={panes.detailsW} min={280} max={900} fallback={DEFAULT_PANES.detailsW} onChange={(detailsW) => setPane({ detailsW })} onDrag={setDragging} />}
