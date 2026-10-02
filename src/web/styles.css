@@ -684,3 +684,17 @@ code,
     display: none;
   }
 }
+
+/* ---------------------------------------------------------------- delete confirm */
+.confirm-delete {
+  flex-basis: 100%;
+  border: 1px solid var(--danger);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+.confirm-delete p {
+  margin: 0 0 6px;
+}
+.confirm-delete .warn {
+  color: var(--danger);
+}
