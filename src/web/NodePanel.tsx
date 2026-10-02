@@ -1,4 +1,4 @@
-import { Crosshair, Plus, Trash2, X } from 'lucide-react';
+import { Check, Crosshair, Pencil, Plus, Trash2, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { ACTOR_KINDS, ANALYST_ID, EDGE_RULES, type Edge, type EdgeKind, Effort, type Event, type Node, type NodeKind, type Op, ResourceType, USER_ID } from '../shared/model';
 import { api, type NodeDetail } from './api';
@@ -142,28 +142,60 @@ function Section({ title, children, open = true }: { title: string; children: Re
   );
 }
 
-/** Text that saves on blur (or Enter for one line). */
+/**
+ * A field shown read-only (multiline text as markdown) with a pencil that switches it to editing.
+ * A failed save (e.g. a version conflict) keeps the editor open, so nothing typed is lost.
+ * Enter saves a one-line field, Ctrl/Cmd+Enter a multiline one; Escape cancels.
+ */
 function InlineText(p: { value: string; onSave(v: string): unknown; multiline?: boolean; className?: string; label: string; placeholder?: string }) {
+  const [editing, setEditing] = useState(false);
   const [v, setV] = useState(p.value);
-  useEffect(() => setV(p.value), [p.value]);
-  const commit = () => {
-    if (v !== p.value && (v.trim() || p.multiline)) void p.onSave(v);
+  const [saving, setSaving] = useState(false);
+  const start = () => {
+    setV(p.value);
+    setEditing(true);
   };
-  if (p.multiline)
-    return <textarea className={p.className} aria-label={p.label} placeholder={p.placeholder} rows={Math.min(12, Math.max(3, v.split('\n').length + 1))} value={v} onChange={(e) => setV(e.target.value)} onBlur={commit} />;
+  const cancel = () => setEditing(false);
+  const commit = async () => {
+    if (v === p.value) return cancel();
+    if (!v.trim() && !p.multiline) return; // one-line fields (titles) can't be blanked
+    setSaving(true);
+    const r = await p.onSave(v);
+    setSaving(false);
+    if (r !== null) setEditing(false); // useOps returns null on error and shows the message
+  };
+  if (!editing)
+    return (
+      <div className={`field-view ${p.multiline ? 'multi' : ''} ${p.className ?? ''}`}>
+        <div className="field-value">{p.value ? p.multiline ? <Md text={p.value} /> : p.value : <span className="muted small">{p.placeholder ?? '—'}</span>}</div>
+        <button type="button" className="icon" aria-label={`Edit ${p.label}`} title={`Edit ${p.label}`} onClick={start}>
+          <Pencil size={13} />
+        </button>
+      </div>
+    );
+  const keys = (e: React.KeyboardEvent) => {
+    if (e.key === 'Escape') cancel();
+    if (e.key === 'Enter' && (!p.multiline || e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      void commit();
+    }
+  };
   return (
-    <input
-      className={p.className}
-      aria-label={p.label}
-      placeholder={p.placeholder}
-      value={v}
-      onChange={(e) => setV(e.target.value)}
-      onBlur={commit}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-        if (e.key === 'Escape') setV(p.value);
-      }}
-    />
+    <div className="field-edit">
+      {p.multiline ? (
+        <textarea autoFocus aria-label={p.label} placeholder={p.placeholder} rows={Math.min(16, Math.max(4, v.split('\n').length + 1))} value={v} onChange={(e) => setV(e.target.value)} onKeyDown={keys} />
+      ) : (
+        <input autoFocus className={p.className} aria-label={p.label} placeholder={p.placeholder} value={v} onChange={(e) => setV(e.target.value)} onKeyDown={keys} />
+      )}
+      <div className="row">
+        <button type="button" className="btn small primary" disabled={saving} onClick={() => void commit()}>
+          <Check size={14} /> Save
+        </button>
+        <button type="button" className="btn small" onClick={cancel}>
+          Cancel
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -217,10 +249,10 @@ function Attrs({ node: n, save }: { node: Node; save(p: { attrs: Record<string, 
           </Section>
           {n.kind === 'agent' && (
             <Section title="Agent">
-              <label className="field">
+              <div className="field">
                 <span>Models, cheapest first</span>
                 <InlineText value={list(a.models)} onSave={(v) => set('models', parseList(v))} label="Models" placeholder="haiku, sonnet, opus" />
-              </label>
+              </div>
               <div className="row">
                 <label className="field">
                   <span>Default effort</span>
@@ -245,10 +277,10 @@ function Attrs({ node: n, save }: { node: Node; save(p: { attrs: Record<string, 
           )}
           <Section title="Briefs" open={Object.keys(briefs).length > 0}>
             {BRIEFS.map(([k, label]) => (
-              <label key={k} className="field">
+              <div key={k} className="field">
                 <span>{label}</span>
                 <InlineText value={briefs[k] ?? ''} multiline onSave={(v) => set('briefs', { ...briefs, [k]: v || undefined })} label={label} />
-              </label>
+              </div>
             ))}
           </Section>
         </>
