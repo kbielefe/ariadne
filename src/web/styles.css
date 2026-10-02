@@ -474,6 +474,51 @@ code,
 .title-input:hover {
   border-color: var(--line);
 }
+/* read-only field with a pencil; the pencil shows on hover or focus */
+.panel-head > .field-view,
+.panel-head > .field-edit,
+.row > .field-view,
+.row > .field-edit {
+  flex: 1;
+}
+.field-view {
+  display: flex;
+  gap: 4px;
+  align-items: flex-start;
+}
+.field-view > .field-value {
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+.field-view.multi > .field-value {
+  font-size: 14px;
+}
+.field-view > .icon {
+  flex: none;
+  opacity: 0.35;
+}
+.field-view:hover > .icon,
+.field-view > .icon:focus-visible {
+  opacity: 1;
+}
+.field-edit {
+  display: grid;
+  gap: 4px;
+}
+.field-edit > .row {
+  margin: 0;
+}
+.copy-id {
+  flex: none;
+  align-items: center;
+  gap: 3px;
+}
+.copy-id.copied {
+  color: var(--good);
+}
+.copy-id.failed {
+  color: var(--danger);
+}
 .section {
   border-top: 1px solid var(--line);
   padding-top: 8px;
@@ -560,6 +605,28 @@ code,
 .ev-edit {
   display: grid;
   gap: 6px;
+}
+.ev-toggle,
+.ev-preview {
+  width: 100%;
+  border: 0;
+  background: none;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ev-preview {
+  display: block;
+  color: var(--muted);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.ev-instructions {
+  border-left: 2px solid var(--line);
+  padding-left: 8px;
+  margin: 6px 0;
 }
 
 .kind-task {

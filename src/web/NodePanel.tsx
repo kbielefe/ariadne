@@ -1,4 +1,4 @@
-import { Crosshair, Plus, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Copy, Crosshair, Pencil, Plus, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { ACTOR_KINDS, ANALYST_ID, EDGE_RULES, type Edge, type EdgeKind, Effort, type Event, type Node, type NodeKind, type Op, ResourceType, USER_ID } from '../shared/model';
 import { api, type NodeDetail } from './api';
@@ -91,6 +91,7 @@ export function NodePanel({ id, onSelect, onClose }: { id: string; onSelect(id: 
       <div className="panel-head">
         <KindIcon kind={n.kind} size={18} />
         <InlineText value={n.title} onSave={(title) => save({ title })} className="title-input" label="Title" />
+        <CopyId id={id} />
         <button className="icon" aria-label="Close" onClick={onClose}>
           <X size={16} />
         </button>
@@ -125,6 +126,33 @@ export function NodePanel({ id, onSelect, onClose }: { id: string; onSelect(id: 
   );
 }
 
+/** Copies the node id (for MCP calls or notes), with a brief "copied" check. */
+function CopyId({ id }: { id: string }) {
+  const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle');
+  useEffect(() => {
+    if (state === 'idle') return;
+    const t = setTimeout(() => setState('idle'), 1500);
+    return () => clearTimeout(t);
+  }, [state]);
+  const label = state === 'copied' ? 'Copied id' : state === 'failed' ? `Couldn't copy; the id is ${id}` : 'Copy id';
+  return (
+    <button
+      className={`icon copy-id ${state}`}
+      aria-label={label}
+      title={label}
+      onClick={() =>
+        (navigator.clipboard?.writeText(id) ?? Promise.reject(new Error('no clipboard'))).then(
+          () => setState('copied'),
+          () => setState('failed'),
+        )
+      }
+    >
+      {state === 'copied' ? <Check size={15} /> : <Copy size={15} />}
+      {state === 'copied' && <span className="small">copied</span>}
+    </button>
+  );
+}
+
 function Section({ title, children, open = true }: { title: string; children: React.ReactNode; open?: boolean }) {
   return (
     <details className="section" open={open}>
@@ -134,28 +162,60 @@ function Section({ title, children, open = true }: { title: string; children: Re
   );
 }
 
-/** Text that saves on blur (or Enter for one line). */
+/**
+ * A field shown read-only (multiline text as markdown) with a pencil that switches it to editing.
+ * A failed save (e.g. a version conflict) keeps the editor open, so nothing typed is lost.
+ * Enter saves a one-line field, Ctrl/Cmd+Enter a multiline one; Escape cancels.
+ */
 function InlineText(p: { value: string; onSave(v: string): unknown; multiline?: boolean; className?: string; label: string; placeholder?: string }) {
+  const [editing, setEditing] = useState(false);
   const [v, setV] = useState(p.value);
-  useEffect(() => setV(p.value), [p.value]);
-  const commit = () => {
-    if (v !== p.value && (v.trim() || p.multiline)) void p.onSave(v);
+  const [saving, setSaving] = useState(false);
+  const start = () => {
+    setV(p.value);
+    setEditing(true);
   };
-  if (p.multiline)
-    return <textarea className={p.className} aria-label={p.label} placeholder={p.placeholder} rows={Math.min(12, Math.max(3, v.split('\n').length + 1))} value={v} onChange={(e) => setV(e.target.value)} onBlur={commit} />;
+  const cancel = () => setEditing(false);
+  const commit = async () => {
+    if (v === p.value) return cancel();
+    if (!v.trim() && !p.multiline) return; // one-line fields (titles) can't be blanked
+    setSaving(true);
+    const r = await p.onSave(v);
+    setSaving(false);
+    if (r !== null) setEditing(false); // useOps returns null on error and shows the message
+  };
+  if (!editing)
+    return (
+      <div className={`field-view ${p.multiline ? 'multi' : ''} ${p.className ?? ''}`}>
+        <div className="field-value">{p.value ? p.multiline ? <Md text={p.value} /> : p.value : <span className="muted small">{p.placeholder ?? '—'}</span>}</div>
+        <button type="button" className="icon" aria-label={`Edit ${p.label}`} title={`Edit ${p.label}`} onClick={start}>
+          <Pencil size={13} />
+        </button>
+      </div>
+    );
+  const keys = (e: React.KeyboardEvent) => {
+    if (e.key === 'Escape') cancel();
+    if (e.key === 'Enter' && (!p.multiline || e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      void commit();
+    }
+  };
   return (
-    <input
-      className={p.className}
-      aria-label={p.label}
-      placeholder={p.placeholder}
-      value={v}
-      onChange={(e) => setV(e.target.value)}
-      onBlur={commit}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-        if (e.key === 'Escape') setV(p.value);
-      }}
-    />
+    <div className="field-edit">
+      {p.multiline ? (
+        <textarea autoFocus aria-label={p.label} placeholder={p.placeholder} rows={Math.min(16, Math.max(4, v.split('\n').length + 1))} value={v} onChange={(e) => setV(e.target.value)} onKeyDown={keys} />
+      ) : (
+        <input autoFocus className={p.className} aria-label={p.label} placeholder={p.placeholder} value={v} onChange={(e) => setV(e.target.value)} onKeyDown={keys} />
+      )}
+      <div className="row">
+        <button type="button" className="btn small primary" disabled={saving} onClick={() => void commit()}>
+          <Check size={14} /> Save
+        </button>
+        <button type="button" className="btn small" onClick={cancel}>
+          Cancel
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -209,10 +269,10 @@ function Attrs({ node: n, save }: { node: Node; save(p: { attrs: Record<string, 
           </Section>
           {n.kind === 'agent' && (
             <Section title="Agent">
-              <label className="field">
+              <div className="field">
                 <span>Models, cheapest first</span>
                 <InlineText value={list(a.models)} onSave={(v) => set('models', parseList(v))} label="Models" placeholder="haiku, sonnet, opus" />
-              </label>
+              </div>
               <div className="row">
                 <label className="field">
                   <span>Default effort</span>
@@ -237,10 +297,10 @@ function Attrs({ node: n, save }: { node: Node; save(p: { attrs: Record<string, 
           )}
           <Section title="Briefs" open={Object.keys(briefs).length > 0}>
             {BRIEFS.map(([k, label]) => (
-              <label key={k} className="field">
+              <div key={k} className="field">
                 <span>{label}</span>
                 <InlineText value={briefs[k] ?? ''} multiline onSave={(v) => set('briefs', { ...briefs, [k]: v || undefined })} label={label} />
-              </label>
+              </div>
             ))}
           </Section>
         </>
@@ -365,65 +425,93 @@ function AddEdge({ node: n, run }: { node: Node; run(ops: Op[]): Promise<unknown
 
 // ---------------------------------------------------------------- events
 
+/** First non-empty line of a markdown body, roughly de-marked, for a collapsed event. */
+function preview(body: string): string {
+  const line = body.split('\n').find((l) => l.trim()) ?? '';
+  const plain = line.replace(/^\s*(#+|[-*+]|\d+\.|>)\s*/, '').replace(/[*_`]/g, '').replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').trim();
+  return plain.length > 140 ? `${plain.slice(0, 140)}…` : plain;
+}
+
 function Events({ node: n, events, run }: { node: Node; events: Event[]; run(ops: Op[]): Promise<unknown> }) {
   const { name } = useApp();
   const [editing, setEditing] = useState<string | null>(null);
+  // Bodies start collapsed to a one-line preview; click the header to read the whole thing.
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
+  const toggle = (id: string) => setExpanded((s) => (s.has(id) ? new Set([...s].filter((x) => x !== id)) : new Set([...s, id])));
   if (!events.length) return null;
   return (
-    <Section title={`Events (${events.length})`} open={events.length < 6}>
+    <Section title={n.kind === 'task' ? `Reports and assignments (${events.length})` : `Events (${events.length})`}>
       <ul className="events">
-        {[...events].reverse().map((e) => (
-          <li key={e.id} className={`ev ev-${e.kind}`}>
-            <div className="ev-head">
-              <span className="tag">{e.card ? 'card' : e.kind}</span>
-              <span>
-                {name(e.sender)} → {name(e.recipient)}
-              </span>
-              {e.state && <span className={`tag ${e.state}`}>{e.state}</span>}
-              <span className="muted small">{ago(e.createdAt)}</span>
-            </div>
-            {editing === e.id ? (
-              <EventEditor ev={e} run={run} done={() => setEditing(null)} />
-            ) : (
-              <>
-                {e.card && <strong>{e.card.title}</strong>}
-                <Md text={e.body.length > 400 ? `${e.body.slice(0, 400)}…` : e.body} />
-                {Object.entries(e.decisions).length > 0 && (
-                  <p className="muted small">
-                    {Object.entries(e.decisions)
-                      .map(([k, d]) => `${k}: ${String(d.value)} (${d.by}${d.confidence != null ? ` ${Math.round(d.confidence * 100)}%` : ''})`)
-                      .join(' · ')}
-                  </p>
-                )}
-                <div className="chips">
-                  {e.tasks
-                    .filter((t) => t !== n.id)
-                    .map((t) => (
-                      <NodeChip key={t} id={t} />
-                    ))}
-                </div>
-                <div className="row">
-                  <button className="link small" onClick={() => setEditing(e.id)}>
-                    Edit
+        {[...events].reverse().map((e) => {
+          const open = expanded.has(e.id) || editing === e.id;
+          return (
+            <li key={e.id} className={`ev ev-${e.kind}`}>
+              <button type="button" className="ev-head ev-toggle" aria-expanded={open} onClick={() => toggle(e.id)}>
+                {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                <span className="tag">{e.card ? 'card' : e.kind}</span>
+                <span>
+                  {name(e.sender)} → {name(e.recipient)}
+                </span>
+                {e.state && <span className={`tag ${e.state}`}>{e.state}</span>}
+                <span className="muted small" title={new Date(e.createdAt).toLocaleString()}>
+                  {ago(e.createdAt)}
+                </span>
+              </button>
+              {!open ? (
+                (e.card || e.body) && (
+                  <button type="button" className="ev-preview muted small" onClick={() => toggle(e.id)}>
+                    {e.card ? e.card.title : preview(e.body)}
                   </button>
-                  {n.kind === 'task' && (
-                    <button className="link small" onClick={() => void run([{ op: 'update_event', id: e.id, tasks: e.tasks.filter((t) => t !== n.id) }])}>
-                      Unlink from this task
-                    </button>
+                )
+              ) : editing === e.id ? (
+                <EventEditor ev={e} run={run} done={() => setEditing(null)} />
+              ) : (
+                <>
+                  {e.card && <strong>{e.card.title}</strong>}
+                  <Md text={e.body} />
+                  {e.instructions && (
+                    <div className="ev-instructions">
+                      <span className="muted small">Instructions</span>
+                      <Md text={e.instructions} />
+                    </div>
                   )}
-                  <button
-                    className="link small danger"
-                    onClick={() => {
-                      if (confirm('Delete this event?')) void run([{ op: 'delete_event', id: e.id }]);
-                    }}
-                  >
-                    Delete
-                  </button>
-                </div>
-              </>
-            )}
-          </li>
-        ))}
+                  {Object.entries(e.decisions).length > 0 && (
+                    <p className="muted small">
+                      {Object.entries(e.decisions)
+                        .map(([k, d]) => `${k}: ${String(d.value)} (${d.by}${d.confidence != null ? ` ${Math.round(d.confidence * 100)}%` : ''})`)
+                        .join(' · ')}
+                    </p>
+                  )}
+                  <div className="chips">
+                    {e.tasks
+                      .filter((t) => t !== n.id)
+                      .map((t) => (
+                        <NodeChip key={t} id={t} />
+                      ))}
+                  </div>
+                  <div className="row">
+                    <button className="link small" onClick={() => setEditing(e.id)}>
+                      Edit
+                    </button>
+                    {n.kind === 'task' && (
+                      <button className="link small" onClick={() => void run([{ op: 'update_event', id: e.id, tasks: e.tasks.filter((t) => t !== n.id) }])}>
+                        Unlink from this task
+                      </button>
+                    )}
+                    <button
+                      className="link small danger"
+                      onClick={() => {
+                        if (confirm('Delete this event?')) void run([{ op: 'delete_event', id: e.id }]);
+                      }}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </>
+              )}
+            </li>
+          );
+        })}
       </ul>
     </Section>
   );
