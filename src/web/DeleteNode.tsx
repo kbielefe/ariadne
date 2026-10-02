@@ -41,7 +41,7 @@ export function DeleteNode({ detail: d, run, onDeleted }: { detail: NodeDetail; 
           </div>
         </>
       )}
-      <p className="muted small">You can undo it right after, or later by asking the Analyst (MCP history / undo).</p>
+      <p className="muted small">You can undo it right after, or later by asking Claude (MCP history / undo).</p>
       <div className="row">
         <button className="btn small danger" autoFocus onClick={async () => {
             const done = await run([{ op: 'delete_node', id: n.id }]);

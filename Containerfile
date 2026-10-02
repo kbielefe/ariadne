@@ -1,5 +1,4 @@
-# Ariadne v2 image: the server (web UI + API + MCP + relay). Runners run on the host, where the
-# claude CLI and its login live. Needs the Adtran VPN for the npm registry.
+# Ariadne image: the server (web UI + API + MCP). Needs the Adtran VPN for the npm registry.
 ARG NODE_IMAGE=artifactory.adtran.com/docker/node:24-alpine@sha256:333f6b3eca25980d5682c26207665b93c9417786b21760b2764d5821d9704c8a
 
 FROM ${NODE_IMAGE} AS builder

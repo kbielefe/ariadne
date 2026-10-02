@@ -1,4 +1,4 @@
-# Ariadne v2: local, single-user stack for rootless Podman Compose. Runs next to v1 (ports differ).
+# Ariadne: local, single-user stack for rootless Podman Compose.
 #   podman compose up -d        Open http://127.0.0.1:3100
 # No authentication on the web UI or /mcp: loopback only.
 name: ariadne2
@@ -8,22 +8,18 @@ x-podman:
 
 services:
   app:
-    image: localhost/ariadne2:${ARIADNE_VERSION:-0.2.0}
+    image: localhost/ariadne2:${ARIADNE_VERSION:-0.3.0}
     build:
       context: .
       dockerfile: Containerfile
     restart: unless-stopped
     depends_on:
       postgres: { condition: service_healthy }
-      rabbitmq: { condition: service_healthy }
     environment:
       DATABASE_URL: postgres://ariadne:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/ariadne
-      ARIADNE_AMQP_URL: amqp://ariadne:${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}@rabbitmq:5672/ariadne
       ARIADNE_LISTEN_HOST: 0.0.0.0
       ARIADNE_LISTEN_PORT: "3100"
       ARIADNE_ALLOWED_HOSTS: 127.0.0.1:${ARIADNE_PORT:-3100},localhost:${ARIADNE_PORT:-3100}
-      ARIADNE_CLAIM_TIMEOUT_MINUTES: ${ARIADNE_CLAIM_TIMEOUT_MINUTES:-30}
-      ARIADNE_CLAIM_WAIT_MINUTES: ${ARIADNE_CLAIM_WAIT_MINUTES:-480}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     # Map you to the image's node user.
     userns_mode: "keep-id:uid=1000,gid=1000"
@@ -56,32 +52,9 @@ services:
       timeout: 5s
       retries: 20
 
-  # Runners on this machine connect on loopback.
-  rabbitmq:
-    image: artifactory.adtran.com/docker/rabbitmq:4.1.4-alpine@sha256:b736d649308e1b3e1a116c3f36986b605ee3d03e88f10166be2900083d2e63f2
-    restart: unless-stopped
-    hostname: rabbitmq
-    user: rabbitmq
-    environment:
-      RABBITMQ_DEFAULT_USER: ariadne
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD in .env}
-      RABBITMQ_DEFAULT_VHOST: ariadne
-      RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: -rabbit log [{console,[{level,warning}]}]
-    volumes: [rabbitmq_data:/var/lib/rabbitmq]
-    ports:
-      - "127.0.0.1:${RABBITMQ_PORT:-5674}:5672"
-    networks: [frontend, backend]
-    healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
-      interval: 10s
-      timeout: 10s
-      retries: 12
-      start_period: 20s
-
 networks:
   frontend: {}
   backend: { internal: true }
 
 volumes:
   postgres_data: {}
-  rabbitmq_data: {}

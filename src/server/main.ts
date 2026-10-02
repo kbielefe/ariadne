@@ -1,14 +1,12 @@
-// Ariadne v2 server: web UI + API + MCP + the scheduler + the RabbitMQ relay, in one process.
+// Ariadne server: web UI + API + MCP, in one process.
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import fastifyStatic from '@fastify/static';
 import Fastify from 'fastify';
 import { registerApi } from './api';
-import { amqpPublisher, consumeInbox, Relay } from './bus';
 import { Core } from './core';
 import { createPool, migrate } from './db';
 import { Hub } from './hub';
-import { startScheduler } from './scheduler';
 
 const env = process.env;
 
@@ -26,7 +24,6 @@ async function main() {
   const host = env.ARIADNE_LISTEN_HOST ?? '127.0.0.1';
   const port = Number(env.ARIADNE_LISTEN_PORT ?? 3100);
   const allowedHosts = (env.ARIADNE_ALLOWED_HOSTS ?? `127.0.0.1:${port},localhost:${port}`).split(',').map((h) => h.trim());
-  const amqpUrl = secret('ARIADNE_AMQP_URL');
 
   const db = createPool(databaseUrl);
   const applied = await migrate(db, env.ARIADNE_MIGRATIONS_DIR ?? resolve(import.meta.dirname, 'migrations'));
@@ -34,8 +31,7 @@ async function main() {
   if (process.argv.includes('--migrate-only')) return db.end();
 
   const hub = new Hub();
-  const core = new Core(db, hub, { decideTimeoutMs: Number(env.ARIADNE_DECIDE_TIMEOUT_MS ?? 5000), claimTimeoutMinutes: Number(env.ARIADNE_CLAIM_TIMEOUT_MINUTES ?? 30), claimWaitMinutes: Number(env.ARIADNE_CLAIM_WAIT_MINUTES ?? 480) });
-  await core.releaseHeld();
+  const core = new Core(db, hub);
 
   const app = Fastify({ logger: { level: env.LOG_LEVEL ?? 'info' }, bodyLimit: 2 * 1024 * 1024 });
   registerApi(app, core, { allowedHosts });
@@ -48,20 +44,8 @@ async function main() {
     );
   }
 
-  const log = { info: (m: string, o?: object) => app.log.info(o ?? {}, m), error: (m: string, o?: object) => app.log.error(o ?? {}, m) };
-  const stops: (() => Promise<void> | void)[] = [startScheduler(core, log)];
-  if (amqpUrl) {
-    const publisher = amqpPublisher(amqpUrl, log);
-    const relay = new Relay(core, publisher, log);
-    relay.start();
-    stops.push(() => relay.stop(), () => publisher.close(), consumeInbox(amqpUrl, core, log));
-  } else {
-    app.log.warn('No ARIADNE_AMQP_URL: agents will not receive deliveries (events wait as pending).');
-  }
-
   await app.listen({ host, port });
   const shutdown = async () => {
-    for (const stop of stops) await stop();
     await app.close();
     await db.end();
     process.exit(0);

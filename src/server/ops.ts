@@ -1,8 +1,8 @@
-// Applies a batch of operations (the one change vocabulary shared by the UI, MCP, and agent
-// proposals) inside the caller's transaction. Checks every rule the database can't.
+// Applies a batch of operations (the one change vocabulary shared by the UI and MCP)
+// inside the caller's transaction. Checks every rule the database can't.
 import { z } from 'zod';
 import { wouldCycle } from '../shared/graph';
-import { ANALYST_ID, ATTRS_BY_KIND, EDGE_RULES, type NodeKind, type Op, Ops, USER_ID } from '../shared/model';
+import { ATTRS_BY_KIND, EDGE_RULES, type NodeKind, type Op, Ops, USER_ID } from '../shared/model';
 import * as s from './store';
 import { type Ctx, Invalid } from './store';
 
@@ -11,8 +11,6 @@ export interface OpResult {
   id: string;
   ref?: string;
 }
-
-const PROTECTED = new Set([USER_ID, ANALYST_ID]);
 
 export async function applyOps(c: Ctx, input: unknown): Promise<OpResult[]> {
   const ops = Ops.parse(input);
@@ -66,7 +64,7 @@ async function applyOne(c: Ctx, op: Op, resolve: (v: string) => string, refs: Ma
     }
     case 'delete_node': {
       const id = resolve(op.id);
-      if (PROTECTED.has(id)) throw new Invalid('You and the Analyst can be edited but not deleted');
+      if (id === USER_ID) throw new Invalid('You can be edited but not deleted');
       await s.removeNode(c, id);
       return { op: op.op, id };
     }
@@ -98,22 +96,6 @@ async function applyOne(c: Ctx, op: Op, resolve: (v: string) => string, refs: Ma
       }
       await s.removeEdge(c, id);
       return { op: op.op, id };
-    }
-    case 'update_event': {
-      const ev = await s.getEvent(c.tx, op.id);
-      if (op.state && ev.kind !== 'assign') throw new Invalid('only assignments have a state');
-      await s.patchEvent(c, op.id, { body: op.body, instructions: op.instructions, state: op.state });
-      if (op.tasks) {
-        const want = new Set(op.tasks.map(resolve));
-        for (const t of want) if ((await s.getNode(c.tx, t)).kind !== 'task') throw new Invalid(`${t} is not a task`);
-        for (const t of ev.tasks) if (!want.has(t)) await s.unlinkEventTask(c, ev.id, t);
-        for (const t of want) await s.linkEventTask(c, ev.id, t);
-      }
-      return { op: op.op, id: op.id };
-    }
-    case 'delete_event': {
-      await s.removeEvent(c, op.id);
-      return { op: op.op, id: op.id };
     }
   }
 }

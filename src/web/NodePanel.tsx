@@ -1,9 +1,9 @@
-import { Check, ChevronDown, ChevronRight, Copy, Crosshair, Pencil, Plus, X } from 'lucide-react';
+import { Check, Copy, Crosshair, Pencil, Plus, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { ACTOR_KINDS, ANALYST_ID, EDGE_RULES, type Edge, type EdgeKind, Effort, type Event, type Node, type NodeKind, type Op, ResourceType, USER_ID } from '../shared/model';
+import { ACTOR_KINDS, EDGE_RULES, type Edge, type EdgeKind, type Node, type NodeKind, type Op, ResourceType, USER_ID } from '../shared/model';
 import { api, type NodeDetail } from './api';
 import { useApp } from './App';
-import { ago, KindIcon, Md, NodeChip } from './bits';
+import { ago, KindIcon, Md } from './bits';
 import { DeleteNode } from './DeleteNode';
 import { NodePicker } from './NodePicker';
 
@@ -24,7 +24,7 @@ function useOps() {
 
 // ================================================================ create
 
-const KINDS: NodeKind[] = ['task', 'person', 'agent', 'team', 'resource'];
+const KINDS: NodeKind[] = ['task', 'person', 'team', 'resource'];
 
 export function NewNodeForm({ onCreated }: { onCreated(id: string): void }) {
   const { focus, byId } = useApp();
@@ -85,7 +85,6 @@ export function NodePanel({ id, onSelect, onClose }: { id: string; onSelect(id: 
   if (!d || d.node.id !== id) return <div className="panel-body muted">Loading…</div>;
   const n = d.node;
   const save = (p: Omit<Extract<Op, { op: 'update_node' }>, 'op' | 'id'>) => run([{ op: 'update_node', id, version: n.version, ...p }]);
-  const protectedNode = id === USER_ID || id === ANALYST_ID;
   return (
     <div className="panel-body" key={id}>
       <div className="panel-head">
@@ -108,7 +107,7 @@ export function NodePanel({ id, onSelect, onClose }: { id: string; onSelect(id: 
         <button className={`btn small ${focus === id ? 'on' : ''}`} onClick={() => setFocus(focus === id ? null : id)}>
           <Crosshair size={14} /> {focus === id ? 'Focused' : 'Focus'}
         </button>
-        {!protectedNode && <DeleteNode detail={d} run={run} onDeleted={() => onSelect(null)} />}
+        {id !== USER_ID && <DeleteNode detail={d} run={run} onDeleted={() => onSelect(null)} />}
       </div>
       {error && <p className="error">{error}</p>}
 
@@ -118,7 +117,6 @@ export function NodePanel({ id, onSelect, onClose }: { id: string; onSelect(id: 
 
       <Attrs node={n} save={save} />
       <Edges detail={d} run={run} onSelect={onSelect} />
-      <Events node={n} events={d.events} run={run} />
       <p className="muted small">
         Updated {ago(n.updatedAt)} · v{n.version} · <code>{n.id}</code>
       </p>
@@ -226,17 +224,9 @@ const parseList = (s: string) =>
     .map((x) => x.trim())
     .filter(Boolean);
 
-const BRIEFS = [
-  ['onAssignment', 'When it receives an assignment'],
-  ['onReport', 'When it reports back'],
-  ['onDelegate', 'When it assigns to a subordinate'],
-  ['onReview', 'When it receives results'],
-] as const;
-
 function Attrs({ node: n, save }: { node: Node; save(p: { attrs: Record<string, unknown> }): unknown }) {
   const a = n.attrs;
   const set = (k: string, v: unknown) => save({ attrs: { [k]: v === '' || (Array.isArray(v) && !v.length) ? null : v } });
-  const briefs = (a.briefs ?? {}) as Record<string, string>;
   return (
     <>
       {n.kind === 'task' && (
@@ -269,47 +259,9 @@ function Attrs({ node: n, save }: { node: Node; save(p: { attrs: Record<string, 
         </Section>
       )}
       {(ACTOR_KINDS as readonly string[]).includes(n.kind) && (
-        <>
-          <Section title="Areas (owns / can help with)">
-            <InlineText value={list(a.areas)} onSave={(v) => set('areas', parseList(v))} label="Areas" placeholder="comma separated, e.g. RBAC, feature flags" />
-          </Section>
-          {n.kind === 'agent' && (
-            <Section title="Agent">
-              <div className="field">
-                <span>Models, cheapest first</span>
-                <InlineText value={list(a.models)} onSave={(v) => set('models', parseList(v))} label="Models" placeholder="haiku, sonnet, opus" />
-              </div>
-              <div className="row">
-                <label className="field">
-                  <span>Default effort</span>
-                  <select value={String(a.effort ?? '')} onChange={(e) => set('effort', e.target.value)}>
-                    <option value="">—</option>
-                    {Effort.options.map((x) => (
-                      <option key={x}>{x}</option>
-                    ))}
-                  </select>
-                </label>
-                <label className="check">
-                  <input type="checkbox" checked={!!a.paused} onChange={(e) => set('paused', e.target.checked || null)} /> paused
-                </label>
-                <label className="check" title="Answers System One questions (choice / score / yes-no); writes no text">
-                  <input type="checkbox" checked={!!a.decider} onChange={(e) => set('decider', e.target.checked || null)} /> System One decider
-                </label>
-                <label className="check" title="Works in an interactive Claude Code session: its events wait until a session claims them over MCP (claim_assignment)">
-                  <input type="checkbox" checked={!!a.interactive} onChange={(e) => set('interactive', e.target.checked || null)} /> interactive (Claude Code)
-                </label>
-              </div>
-            </Section>
-          )}
-          <Section title="Briefs" open={Object.keys(briefs).length > 0}>
-            {BRIEFS.map(([k, label]) => (
-              <div key={k} className="field">
-                <span>{label}</span>
-                <InlineText value={briefs[k] ?? ''} multiline onSave={(v) => set('briefs', { ...briefs, [k]: v || undefined })} label={label} />
-              </div>
-            ))}
-          </Section>
-        </>
+        <Section title="Areas (owns / can help with)">
+          <InlineText value={list(a.areas)} onSave={(v) => set('areas', parseList(v))} label="Areas" placeholder="comma separated, e.g. RBAC, feature flags" />
+        </Section>
       )}
       <Section title="Raw attrs (JSON)" open={false}>
         <RawAttrs node={n} save={save} />
@@ -426,142 +378,5 @@ function AddEdge({ node: n, run }: { node: Node; run(ops: Op[]): Promise<unknown
         onPick={(t) => void run([{ op: 'create_edge', kind: o.kind, src: o.outgoing ? n.id : t.id, dst: o.outgoing ? t.id : n.id }])}
       />
     </div>
-  );
-}
-
-// ---------------------------------------------------------------- events
-
-/** First non-empty line of a markdown body, roughly de-marked, for a collapsed event. */
-function preview(body: string): string {
-  const line = body.split('\n').find((l) => l.trim()) ?? '';
-  const plain = line.replace(/^\s*(#+|[-*+]|\d+\.|>)\s*/, '').replace(/[*_`]/g, '').replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').trim();
-  return plain.length > 140 ? `${plain.slice(0, 140)}…` : plain;
-}
-
-function Events({ node: n, events, run }: { node: Node; events: Event[]; run(ops: Op[]): Promise<unknown> }) {
-  const { name } = useApp();
-  const [editing, setEditing] = useState<string | null>(null);
-  // Bodies start collapsed to a one-line preview; click the header to read the whole thing.
-  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
-  const toggle = (id: string) => setExpanded((s) => (s.has(id) ? new Set([...s].filter((x) => x !== id)) : new Set([...s, id])));
-  if (!events.length) return null;
-  return (
-    <Section title={n.kind === 'task' ? `Reports and assignments (${events.length})` : `Events (${events.length})`}>
-      <ul className="events">
-        {[...events].reverse().map((e) => {
-          const open = expanded.has(e.id) || editing === e.id;
-          return (
-            <li key={e.id} className={`ev ev-${e.kind}`}>
-              <button type="button" className="ev-head ev-toggle" aria-expanded={open} onClick={() => toggle(e.id)}>
-                {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                <span className="tag">{e.card ? 'card' : e.kind}</span>
-                <span>
-                  {name(e.sender)} → {name(e.recipient)}
-                </span>
-                {e.state && <span className={`tag ${e.state}`}>{e.state}</span>}
-                <span className="muted small" title={new Date(e.createdAt).toLocaleString()}>
-                  {ago(e.createdAt)}
-                </span>
-              </button>
-              {!open ? (
-                (e.card || e.body) && (
-                  <button type="button" className="ev-preview muted small" onClick={() => toggle(e.id)}>
-                    {e.card ? e.card.title : preview(e.body)}
-                  </button>
-                )
-              ) : editing === e.id ? (
-                <EventEditor ev={e} run={run} done={() => setEditing(null)} />
-              ) : (
-                <>
-                  {e.card && <strong>{e.card.title}</strong>}
-                  <Md text={e.body} />
-                  {e.instructions && (
-                    <div className="ev-instructions">
-                      <span className="muted small">Instructions</span>
-                      <Md text={e.instructions} />
-                    </div>
-                  )}
-                  {Object.entries(e.decisions).length > 0 && (
-                    <p className="muted small">
-                      {Object.entries(e.decisions)
-                        .map(([k, d]) => `${k}: ${String(d.value)} (${d.by}${d.confidence != null ? ` ${Math.round(d.confidence * 100)}%` : ''})`)
-                        .join(' · ')}
-                    </p>
-                  )}
-                  <div className="chips">
-                    {e.tasks
-                      .filter((t) => t !== n.id)
-                      .map((t) => (
-                        <NodeChip key={t} id={t} />
-                      ))}
-                  </div>
-                  <div className="row">
-                    <button className="link small" onClick={() => setEditing(e.id)}>
-                      Edit
-                    </button>
-                    {n.kind === 'task' && (
-                      <button className="link small" onClick={() => void run([{ op: 'update_event', id: e.id, tasks: e.tasks.filter((t) => t !== n.id) }])}>
-                        Unlink from this task
-                      </button>
-                    )}
-                    <button
-                      className="link small danger"
-                      onClick={() => {
-                        if (confirm('Delete this event?')) void run([{ op: 'delete_event', id: e.id }]);
-                      }}
-                    >
-                      Delete
-                    </button>
-                  </div>
-                </>
-              )}
-            </li>
-          );
-        })}
-      </ul>
-    </Section>
-  );
-}
-
-function EventEditor({ ev, run, done }: { ev: Event; run(ops: Op[]): Promise<unknown>; done(): void }) {
-  const [body, setBody] = useState(ev.body);
-  const [instructions, setInstructions] = useState(ev.instructions);
-  const [state, setState] = useState(ev.state);
-  const [tasks, setTasks] = useState(ev.tasks);
-  return (
-    <form
-      className="ev-edit"
-      onSubmit={async (e) => {
-        e.preventDefault();
-        if (await run([{ op: 'update_event', id: ev.id, body, instructions, tasks, ...(state ? { state } : {}) }])) done();
-      }}
-    >
-      <textarea rows={4} value={body} onChange={(e) => setBody(e.target.value)} aria-label="Body" />
-      {ev.kind === 'assign' && <textarea rows={2} value={instructions} onChange={(e) => setInstructions(e.target.value)} placeholder="Instructions" aria-label="Instructions" />}
-      {ev.kind === 'assign' && (
-        <select value={state ?? 'open'} onChange={(e) => setState(e.target.value as Event['state'])} aria-label="State">
-          <option>open</option>
-          <option>closed</option>
-          <option>withdrawn</option>
-        </select>
-      )}
-      <div className="chips">
-        {tasks.map((t) => (
-          <span key={t} className="chip">
-            <NodeChip id={t} />
-            <button type="button" className="icon" aria-label="Unlink" onClick={() => setTasks(tasks.filter((x) => x !== t))}>
-              <X size={12} />
-            </button>
-          </span>
-        ))}
-      </div>
-      <NodePicker placeholder="Link a task…" kinds={['task']} exclude={tasks} onPick={(t) => setTasks([...tasks, t.id])} />
-      <div className="row">
-        <button className="btn small primary">Save</button>
-        <button type="button" className="btn small" onClick={done}>
-          Cancel
-        </button>
-      </div>
-    </form>
   );
 }

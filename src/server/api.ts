@@ -1,5 +1,5 @@
-// HTTP for the web UI and /mcp (Claude Code sessions). Both are localhost only, with no authentication. Your UI edits apply directly and are audited;
-// the analyst sees them in its next delivery ("userChanges").
+// HTTP for the web UI and /mcp (Claude Code sessions). Both are localhost only, with no authentication.
+// UI edits apply directly and are audited.
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { USER_ID } from '../shared/model';
@@ -42,12 +42,8 @@ export function registerApi(app: FastifyInstance, core: Core, o: ApiOptions) {
   app.get('/api/graph', async () => core.graph());
   app.get<{ Params: { id: string } }>('/api/nodes/:id', async (req) => core.nodeDetail(z.uuid().parse(req.params.id)));
 
-  app.get<{ Querystring: { task?: string; actor?: string; open?: string; limit?: string } }>('/api/events', async (req) =>
-    s.listEvents(core.db, { ...(req.query.task ? { task: req.query.task } : {}), ...(req.query.actor ? { actor: req.query.actor } : {}), open: req.query.open === '1', limit: Number(req.query.limit) || 200 }),
-  );
-
-  app.get<{ Querystring: { because?: string; changeset?: string; limit?: string } }>('/api/history', async (req) => {
-    const rows = await s.listAudit(core.db, { ...(req.query.because ? { because: req.query.because } : {}), ...(req.query.changeset ? { changeset: req.query.changeset } : {}), limit: Number(req.query.limit) || 200 });
+  app.get<{ Querystring: { changeset?: string; limit?: string } }>('/api/history', async (req) => {
+    const rows = await s.listAudit(core.db, { ...(req.query.changeset ? { changeset: req.query.changeset } : {}), limit: Number(req.query.limit) || 200 });
     const ctx = await ContextBuilder.load(core.db);
     return rows.map((a) => ({ ...a, line: describeChange(a, ctx), who: ctx.name(a.actor) }));
   });
@@ -63,16 +59,16 @@ export function registerApi(app: FastifyInstance, core: Core, o: ApiOptions) {
   app.get('/api/stream', (req: FastifyRequest, reply: FastifyReply) => {
     reply.raw.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
     const send = (type: string, data: unknown) => reply.raw.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`);
-    send('hello', { statuses: core.hub.currentStatuses() });
-    const offs = [core.hub.on('changed', () => send('changed', {})), core.hub.on('status', (st) => send('status', st))];
+    send('hello', {});
+    const off = core.hub.on('changed', () => send('changed', {}));
     const ping = setInterval(() => reply.raw.write(': ping\n\n'), 25_000);
     req.raw.on('close', () => {
       clearInterval(ping);
-      for (const off of offs) off();
+      off();
     });
   });
 
-  // ---- MCP: no token; the Host/Origin guard above keeps it to localhost. Agent-specific permissions come later.
+  // ---- MCP: no token; the Host/Origin guard above keeps it to localhost.
   app.post('/mcp', async (req, reply) => {
     reply.hijack();
     await handleMcp(core, req.raw, reply.raw, req.body);

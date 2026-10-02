@@ -12,7 +12,6 @@
   --warn: #b45309;
   --danger: #c0352b;
   --person: #eef2ff;
-  --agent: #e9f7ef;
   --team: #fdf3d8;
   --resource: #f1f2f4;
   --me: #e6edfc;
@@ -34,8 +33,7 @@
     --warn: #f0a14a;
     --danger: #ff7a70;
     --person: #252b45;
-    --agent: #1e3329;
-    --team: #3a3220;
+      --team: #3a3220;
     --resource: #262a32;
     --me: #24304d;
     color-scheme: dark;
@@ -260,12 +258,8 @@ code,
   background: var(--surface-2);
   color: var(--muted);
 }
-.tag.good,
-.tag.open {
+.tag.good {
   color: var(--good);
-}
-.tag.withdrawn {
-  text-decoration: line-through;
 }
 .row {
   display: flex;
@@ -536,8 +530,7 @@ code,
   border-color: var(--accent);
   background: var(--accent-soft);
 }
-.edges,
-.events {
+.edges {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -566,54 +559,11 @@ code,
   gap: 6px;
   margin-top: 6px;
 }
-.events .ev {
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 8px;
-  font-size: 14px;
-}
-.ev-head {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  flex-wrap: wrap;
-  margin-bottom: 4px;
-}
-.ev-edit {
-  display: grid;
-  gap: 6px;
-}
-.ev-toggle,
-.ev-preview {
-  width: 100%;
-  border: 0;
-  background: none;
-  padding: 0;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-.ev-preview {
-  display: block;
-  color: var(--muted);
-  font-size: 13px;
-  overflow-wrap: anywhere;
-}
-.ev-instructions {
-  border-left: 2px solid var(--line);
-  padding-left: 8px;
-  margin: 6px 0;
-}
-
 .kind-task {
   color: var(--accent);
 }
 .kind-person {
   color: #6366f1;
-}
-.kind-agent {
-  color: var(--good);
 }
 .kind-team {
   color: var(--warn);

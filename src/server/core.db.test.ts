@@ -1,8 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { freshCore } from '../test/db';
-import { ANALYST_ID, USER_ID } from '../shared/model';
-import { Relay, type Publisher } from './bus';
-import { ContextBuilder, type Delivery } from './context';
+import { USER_ID } from '../shared/model';
+import { ContextBuilder } from './context';
 import type { Core } from './core';
 import type { Db } from './db';
 import * as s from './store';
@@ -19,26 +18,21 @@ afterEach(async () => {
 });
 
 const asUser = () => who(USER_ID, 'ui');
-const asAnalyst = (because?: string) => who(ANALYST_ID, 'mcp', because);
+const asClaude = () => who(null, 'mcp');
 
 async function ids(ops: unknown[]) {
   const r = await core.ops(asUser(), ops);
   return Object.fromEntries(r.filter((x) => x.ref).map((x) => [x.ref!, x.id]));
 }
 
-async function agent(title: string, attrs: Record<string, unknown> = {}, supervisor = ANALYST_ID) {
-  const r = await ids([
-    { op: 'create_node', ref: 'a', kind: 'agent', title, attrs },
-    { op: 'create_edge', src: '$a', kind: 'reports_to', dst: supervisor },
-  ]);
-  return r.a!;
-}
-
 describe('graph', () => {
-  it('seeds you and the analyst, the analyst reporting to you', async () => {
+  it('seeds only you; agents and events are gone', async () => {
     const g = await core.graph();
-    expect(g.nodes.map((n) => n.title).sort()).toEqual(['Analyst', 'You']);
-    expect(g.edges).toMatchObject([{ src: ANALYST_ID, kind: 'reports_to', dst: USER_ID }]);
+    expect(g.nodes.map((n) => [n.id, n.title])).toEqual([[USER_ID, 'You']]);
+    expect(g.edges).toEqual([]);
+    await expect(core.ops(asUser(), [{ op: 'create_node', kind: 'agent', title: 'Coder' }])).rejects.toThrow();
+    await expect(db.query(`INSERT INTO nodes (kind, title) VALUES ('agent', 'Coder')`)).rejects.toThrow(/nodes_kind_check/);
+    expect((await db.query(`SELECT to_regclass('events') AS e, to_regclass('timers') AS t`)).rows[0]).toEqual({ e: null, t: null });
   });
 
   it('creates tasks with refs; a task waits on what it needs', async () => {
@@ -79,132 +73,11 @@ describe('graph', () => {
       { op: 'create_edge', src: '$mid', kind: 'involves', dst: '$bryan', note: 'owns auth' },
     ]);
     const ctx = await ContextBuilder.load(db);
-    const leaf = ctx.task(t.leaf!, []);
+    const leaf = ctx.task(t.leaf!);
     expect(leaf.guidance).toEqual([{ from: { id: t.root, title: 'Ship v2' }, item: 'Small commits.' }]);
     expect(leaf.resources).toMatchObject([{ from: { title: 'Ship v2' }, item: { name: 'ariadne repo', type: 'repo' } }]);
     expect(leaf.coordinateWith).toMatchObject([{ from: { title: 'Backend' }, item: { name: 'Bryan', note: 'owns auth', areas: ['RBAC'] } }]);
     expect(leaf.ready).toBe(true);
-  });
-});
-
-describe('events for you', () => {
-  const asYou = (because: string) => who(USER_ID, 'mcp', because);
-
-  it('you assign only through the analyst', async () => {
-    const a = await agent('Coder');
-    await expect(core.send(asUser(), { kind: 'assign', recipient: a, body: 'x' })).rejects.toThrow(/through the Analyst/);
-  });
-
-  it('a card is an assignment to you, waiting for a session; your answer is your report to the analyst', async () => {
-    const card = await core.send(asAnalyst(), {
-      kind: 'assign',
-      recipient: USER_ID,
-      body: 'Which repo?',
-      card: { kind: 'choice', title: 'Pick a repo', fields: [{ name: 'repo', label: 'Repo', type: 'select', options: [{ value: 'a', label: 'A' }] }], actions: [{ id: 'ok', label: 'Use it', style: 'primary' }] },
-    });
-    expect(card.delivery).toBe('pending');
-    const r = await core.send(asYou(card.id), { kind: 'report', replyTo: card.id, body: 'Use it: A' });
-    expect(r).toMatchObject({ kind: 'report', sender: USER_ID, recipient: ANALYST_ID, closes: true, delivery: 'pending' });
-    expect((await s.getEvent(db, card.id)).state).toBe('closed');
-    await expect(core.send(asYou(card.id), { kind: 'report', replyTo: card.id, body: 'again' })).rejects.toThrow(/already closed/);
-  });
-
-  it('notes for you wait for a session too', async () => {
-    const fyi = await core.send(asAnalyst(), { kind: 'report', recipient: USER_ID, body: 'Build is green.' });
-    expect(fyi).toMatchObject({ recipient: USER_ID, replyTo: null, delivery: 'pending' });
-  });
-
-  it('cards go to you only', async () => {
-    const a = await agent('Coder');
-    await expect(core.send(asAnalyst(), { kind: 'assign', recipient: a, card: { title: 'x', actions: [{ id: 'a', label: 'a' }] } })).rejects.toThrow(/user only/);
-  });
-
-  it('work for another person becomes a proxy card; your answer is their report', async () => {
-    const t = await ids([
-      { op: 'create_node', ref: 'bryan', kind: 'person', title: 'Bryan' },
-      { op: 'create_node', ref: 'task', kind: 'task', title: 'Agree on RBAC model' },
-    ]);
-    const ask = await core.send(asAnalyst(), { kind: 'assign', recipient: t.bryan, body: 'Do roles nest?', tasks: [t.task!] });
-    expect(ask.delivery).toBe('none');
-    const [card] = await s.listEvents(db, { actor: USER_ID, open: true });
-    expect(card).toMatchObject({ sender: null, recipient: USER_ID, replyTo: ask.id, card: { kind: 'proxy', title: 'Ask Bryan' }, tasks: [t.task], delivery: 'pending' });
-
-    // Not reached yet: the proxy card and Bryan's assignment stay open.
-    await core.send(asYou(card!.id), { kind: 'report', replyTo: card!.id, closes: false, body: 'Out until Monday.' });
-    expect((await s.getEvent(db, ask.id)).state).toBe('open');
-    await core.send(asYou(card!.id), { kind: 'report', replyTo: card!.id, body: 'No, flat roles.' });
-    expect((await s.getEvent(db, ask.id)).state).toBe('closed');
-    const reports = await s.listEvents(db, { kind: 'report', actor: t.bryan });
-    expect(reports).toMatchObject([
-      { sender: t.bryan, recipient: ANALYST_ID, replyTo: ask.id, body: 'Not reached yet: Out until Monday.', closes: false },
-      { sender: t.bryan, recipient: ANALYST_ID, replyTo: ask.id, body: 'No, flat roles.', closes: true, delivery: 'pending' },
-    ]);
-  });
-});
-
-describe('agents', () => {
-  it('reports from agents arrive over the inbox, only from the assignee', async () => {
-    const coder = await agent('Coder', { models: ['sonnet', 'opus'], effort: 'medium' });
-    const other = await agent('Other');
-    const job = await core.send(asAnalyst(), { kind: 'assign', recipient: coder, body: 'Write it' });
-    expect(job.decisions).toEqual({ model: { value: 'sonnet', by: 'default' }, effort: { value: 'medium', by: 'default' } });
-    await expect(core.receive({ type: 'report', sender: other, replyTo: job.id, body: 'done' })).rejects.toThrow(/Only the assignee/);
-    await expect(core.receive({ type: 'report', sender: coder, replyTo: job.id, body: 'done' }, other)).rejects.toThrow(/broker user/);
-    const r = await core.receive({ type: 'report', sender: coder, replyTo: job.id, body: 'Done.', proposals: [{ op: 'create_node', kind: 'task', title: 'Follow-up' }] });
-    expect(r).toMatchObject({ sender: coder, recipient: ANALYST_ID, closes: true, delivery: 'pending', proposals: [{ title: 'Follow-up' }] });
-    expect((await s.getEvent(db, job.id)).state).toBe('closed');
-  });
-
-  it('agents assign only to their direct subordinates', async () => {
-    const lead = await agent('Lead');
-    const junior = await agent('Junior', {}, lead);
-    const peer = await agent('Peer');
-    expect((await core.receive({ type: 'assign', sender: lead, recipient: junior, body: 'Do X' }))!.recipient).toBe(junior);
-    await expect(core.receive({ type: 'assign', sender: lead, recipient: peer, body: 'Do X' })).rejects.toThrow(/direct subordinates/);
-  });
-
-  it('the relay publishes self-contained deliveries and skips paused agents', async () => {
-    const t = await ids([
-      { op: 'create_node', ref: 'root', kind: 'task', title: 'Root', attrs: { guidance: 'Be brief.' } },
-      { op: 'create_node', ref: 'leaf', kind: 'task', title: 'Leaf' },
-      { op: 'create_edge', src: '$root', kind: 'needs', dst: '$leaf' },
-    ]);
-    const coder = await agent('Coder', { briefs: { onAssignment: 'Read the repo first.' } });
-    const sleepy = await agent('Sleepy', { paused: true });
-    const job = await core.send(asAnalyst(), { kind: 'assign', recipient: coder, body: 'Do the leaf', tasks: [t.leaf!] });
-    await core.send(asAnalyst(), { kind: 'assign', recipient: sleepy, body: 'Later' });
-    const sent: { to: string; d: Delivery; priority: number }[] = [];
-    const publisher: Publisher = { publish: async (to, d, o) => void sent.push({ to, d, priority: o.priority }) };
-    const relay = new Relay(core, publisher, { info() {}, error() {} });
-    expect(await relay.flush()).toBe(1);
-    expect(sent[0]!.to).toBe(coder);
-    expect(sent[0]!.d).toMatchObject({
-      event: { id: job.id, from: 'Analyst', body: 'Do the leaf' },
-      recipient: { name: 'Coder', briefs: { onAssignment: 'Read the repo first.' } },
-      supervisor: { name: 'Analyst' },
-      tasks: [{ title: 'Leaf', neededBy: [{ title: 'Root' }], guidance: [{ item: 'Be brief.' }] }],
-    });
-    expect((await s.getEvent(db, job.id)).delivery).toBe('delivered');
-    expect(await relay.flush()).toBe(0);
-  });
-
-  it('the analyst delivery includes your own UI changes since its last delivery', async () => {
-    await ids([{ op: 'create_node', ref: 't', kind: 'task', title: 'Renamed by you' }]);
-    const note = await core.send(who(null, 'core'), { kind: 'report', recipient: ANALYST_ID, body: 'hi' });
-    const d = await (await ContextBuilder.load(db)).delivery(note);
-    expect(d.analyst!.userChanges).toContain('created task "Renamed by you"');
-    expect(d.analyst!.openRoots).toMatchObject([{ title: 'Renamed by you' }]);
-  });
-
-  it('tells the sender when an assignment is overdue, once', async () => {
-    const coder = await agent('Coder');
-    const job = await core.send(asAnalyst(), { kind: 'assign', recipient: coder, body: 'Quick one', dueAt: new Date(Date.now() - 1000).toISOString() });
-    expect(await core.sweepOverdue()).toBe(1);
-    expect(await core.sweepOverdue()).toBe(0);
-    const [r] = await s.listEvents(db, { kind: 'report' });
-    expect(r).toMatchObject({ sender: null, recipient: ANALYST_ID, delivery: 'pending' });
-    expect(r!.body).toMatch(/No report yet from Coder/);
-    expect((await s.getEvent(db, job.id)).state).toBe('open');
   });
 });
 
@@ -215,7 +88,7 @@ describe('undo', () => {
       { op: 'create_node', ref: 'b', kind: 'task', title: 'B' },
       { op: 'create_edge', src: '$a', kind: 'needs', dst: '$b' },
     ]);
-    const w = asAnalyst();
+    const w = asClaude();
     await core.ops(w, [{ op: 'update_node', id: t.a!, title: 'A!' }, { op: 'delete_node', id: t.b! }]);
     expect((await core.graph()).edges.filter((e) => e.kind === 'needs')).toEqual([]);
     await core.undo(asUser(), w.changeset);
@@ -245,26 +118,9 @@ describe('undo', () => {
 
   it('refuses to undo over a newer edit', async () => {
     const t = await ids([{ op: 'create_node', ref: 'a', kind: 'task', title: 'A' }]);
-    const w = asAnalyst();
+    const w = asClaude();
     await core.ops(w, [{ op: 'update_node', id: t.a!, title: 'B' }]);
     await core.ops(asUser(), [{ op: 'update_node', id: t.a!, title: 'C' }]);
     await expect(core.undo(asUser(), w.changeset)).rejects.toThrow(/changed again/);
-  });
-});
-
-describe('System One', () => {
-  it('falls back to defaults when no decider answers in time', async () => {
-    await db.end();
-    ({ db, core } = await freshCore({ decideTimeoutMs: 100 }));
-    await agent('Jev', { decider: true });
-    const coder = await agent('Coder', { models: ['sonnet'], effort: 'low' });
-    const job = await core.send(asAnalyst(), { kind: 'assign', recipient: coder, body: 'Write it' });
-    expect(job.delivery).toBe('held');
-    let ev = await s.getEvent(db, job.id);
-    for (let i = 0; i < 100 && ev.delivery === 'held'; i++) {
-      await new Promise((r) => setTimeout(r, 20));
-      ev = await s.getEvent(db, job.id);
-    }
-    expect(ev).toMatchObject({ delivery: 'pending', decisions: { model: { value: 'sonnet', by: 'default' }, effort: { value: 'low', by: 'default' } } });
   });
 });

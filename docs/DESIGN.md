@@ -1,39 +1,38 @@
-# Ariadne v2 design
+# Ariadne design
 
-**Summary:** Ariadne is a **graph** (tasks, people, agents, teams, resources) plus a **log of
-events** (assign and report). You talk to the Analyst in an **interactive Claude Code session**
-that claims its events over MCP, and browse or edit everything in a **graph view**. Things for you
-(questions, notes) are events too: a session claims them and asks or tells you. Headless agents
-work only through assignments and reports on RabbitMQ.
-
-Agreed on 2026-10-01, after using v1 for real work (v1 is on the `v1` branch). The web chat
-timeline was removed the same day: an interactive Claude Code session over MCP was the better
-conversation, at least until there is a better inference source.
+**Summary:** Ariadne is a **graph** (tasks, people, teams, resources) with an **audit trail**. You keep
+it up to date by directing **Claude Code** in an interactive session (over MCP), and browse or edit it
+in a **graph view**. It's a task and org tracker: trusted external memory for the bigger picture and
+what's next, so they survive interruptions and session changes.
 
 ---
 
-## 1. What changed from v1, and why
+## 1. History
 
-| v1 | v2 | Why |
+| When | What | Why |
 |---|---|---|
-| Outcomes + Tasks + Dependencies + Plans + Reviews + ... (~25 tables) | **5 tables**: `nodes`, `edges`, `events`, `event_tasks`, `audit` (+ `timers`, §5) | v1 felt like data entry or a bug tracker |
-| Outcome | A **root task**: a task that no task `needs` | One concept instead of two |
-| Subtask *and* prerequisite | One edge kind: **A `needs` B** | Breaking work down and blocking on something are the same thing |
-| Pages and forms | **Claude Code session** + **graph view** | Interactive, not data entry |
-| Agents call MCP | **Only the Analyst** changes the graph over MCP | Agents are decoupled; all changes go through one place |
+| v1 (`v1` branch) | Outcomes, tasks, plans, reviews... (~25 tables), pages and forms | Felt like data entry or a bug tracker |
+| v2, 2026-10-01 | Graph + events (assign / report), an Analyst agent, cards, claims, RabbitMQ runners, System One dispatch | An interactive, AI-decision-oriented tool |
+| 2026-10-02 | **Graph + audit only.** Removed the Analyst, events, cards, claims, timers, RabbitMQ, runners, agents, and System One | In practice the user just directed Claude Code in an interactive session, using Ariadne as a task and org tracker. The graph view was what earned its place |
 
-Kept from v1: people, agents, and teams as first-class actors; System One (Jev-like) decisions;
-RabbitMQ to decouple agents from the core.
+Kept from v2: one task edge kind (`needs`), root tasks instead of Outcomes, inherited context, decision
+lines, branch scopes, and undo.
 
 ## 2. Data model
 
 | Table | Holds |
 |---|---|
-| `nodes` | `kind` = task / person / agent / team / resource, plus `title`, `body` (markdown), `status` (tasks only: open / done / dropped), and `attrs` (checked per kind) |
+| `nodes` | `kind` = task / person / team / resource, plus `title`, `body` (markdown), `status` (tasks only: open / done / dropped), and `attrs` (checked per kind) |
 | `edges` | `src -kind-> dst` with an optional `note` |
-| `events` | `assign` / `report` (§3) |
-| `event_tasks` | Which tasks an event is about (many-to-many, so events can share tasks) |
-| `audit` | Every change, with who made it, how (`ui` / `mcp` / `core` / `bus`), and which event it was handling. Grouped into changesets for Undo |
+| `audit` | Every change, with who made it (`actor`: you for the UI, null for MCP) and how (`via`: `ui` / `mcp`). Grouped into changesets for Undo |
+
+**Attrs per kind**
+
+| Kind | Attrs |
+|---|---|
+| task | `guidance`: instructions for this task and everything it needs (inherited) |
+| person, team | `areas`: what they own or can help with |
+| resource | `type` (repo / branch / build / doc / link / other), `url`; for a branch, `repo` and `branch` |
 
 **Edge kinds**
 
@@ -41,14 +40,13 @@ RabbitMQ to decouple agents from the core.
 |---|---|---|
 | `needs` | task → task | Must be done first (subtask or blocker). Acyclic |
 | `uses` | task → resource | Repo, branch, Jenkins build, library docs, link |
-| `involves` | task → actor | Coordinate with this person, agent, or team |
-| `reports_to` | actor → actor | Supervisor. Acyclic |
-| `member_of` | person/agent → team | |
+| `involves` | task → person/team | Coordinate with them |
+| `reports_to` | person/team → person/team | Supervisor. Acyclic |
+| `member_of` | person → team | |
 
-**Computed, not stored:** whether a task is ready (open, and everything it needs is closed), who it's
-assigned to (open assignments), and whether it's a root. When tasks close, Ariadne says which tasks
-that just made ready (`nowReady` in the `apply_ops` and `submit_result` answers, and a "Now ready"
-list at the end of a done report on an assignment), so the next step is never silent.
+**Computed, not stored:** whether a task is ready (open, and everything it needs is closed) and whether
+it's a root (no task needs it). When `apply_ops` closes tasks, its answer lists the tasks that just
+became ready (`nowReady`), so the next step is never silent.
 
 **Inheritance:** a task's context includes the guidance, resources, and `involves` people of every
 task that (transitively) needs it. Attach a repo to a root task once, and all its subtasks get it.
@@ -56,127 +54,40 @@ task that (transitively) needs it. Attach a repo to a root task once, and all it
 **Decisions** (yours or anyone's) are lines in the body of the task they shape:
 `**Decision (Karl, 2026-10-02):** skip signing for now`. No table or node kind: the sidebar shows
 them with the body, and MCP `search` with `decisions: true` finds only nodes that have them and returns
-the lines. The Analyst's instructions say to record them this way.
+the lines. The MCP instructions tell Claude to record them this way.
 
 **Branches are shared scopes:** a resource with `attrs.type` `branch` (plus `repo` and `branch`)
 groups work that ships in one PR. Every task that uses it, and everything those tasks need, is in
-its scope. A delivery lists each branch its tasks use with all the tasks in its scope (`branches`),
-and the brief says to do the work on that branch and open one PR when they're all done.
+its scope. `get_node` on a task lists each branch it ships on with every task in that scope.
 
-**Well-known actors:** *You* (`…0001`) and *Analyst* (`…0002`, which reports to you). They can be
-edited but not deleted.
+**You** (`…0001`) is a person node created by the first migration. It can be edited but not deleted.
 
-### Where each AI decision lives
+## 3. One change vocabulary
 
-| Decision | Read from | Result written to |
-|---|---|---|
-| Model and effort | Agent `attrs.models` (cheapest first) and `effort`, plus the task | The assign event's `decisions` |
-| Break down a task | The task and its inherited context | New tasks + `needs` edges |
-| Who to coordinate with | Actors' `areas` | `involves` edges |
-| Context, repos, Jenkins | Nearby resources | `uses` edges |
-| On receiving an assignment / returning results | The recipient's `briefs.onAssignment` / `onReport` + the event's `instructions` | — |
-| On assigning / receiving results | The assigner's `briefs.onDelegate` / `onReview` | — |
-| When to stop (run-until) | What the user said ("until the branch is ready for PR"), via `assign`'s `until` | The assign event's `decisions.until`; the brief says to keep going without asking until it's met, or until blocked or a decision is needed |
+`create_node`, `update_node`, `delete_node`, `create_edge`, `update_edge`, `delete_edge`, applied
+as a batch in one transaction (`ref` / `$ref` link new nodes). The web UI (`POST /api/ops`) and
+Claude Code (`apply_ops` over MCP) use the same ops.
 
-Each entry in `decisions` records `by` (jev / analyst / default / user) and `confidence`.
-
-## 3. Events: assign and report only
-
-- **Assign:** a sender gives a recipient work about some tasks.
-- **Report:** replies to an assignment, from its recipient back to its sender. `closes` finishes it.
-  A report with no `replyTo` is an FYI.
-
-The user is just another actor:
-
-| Thing | Is |
-|---|---|
-| You talk to the Analyst | Directly, in the Claude Code session (not an event) |
-| A question left for you (`ask_user`) | An assign event to you, with `card` (title, fields, options) |
-| A note left for you (`tell_user`, Ariadne's notices, reminders) | A report to you, with no `replyTo` |
-| Your answer | Your report: a session asks you, then calls `submit_result` with your answer |
-| Work for another person or team | A **proxy card** for you ("Ask Bryan"). Your answer becomes *their* report; a non-final answer is "Not reached yet" |
-| An agent's result | A report over the inbox. It can carry `proposals` (ops) that the Analyst applies or escalates |
-| A System One question | An assign event to a decider agent, with `questions`; the answer is a report with `answers` |
-
-**Who may assign to whom:** you assign only to the Analyst. The Analyst and Ariadne may assign to
-anyone. Other agents may assign only to their direct subordinates (and to deciders).
-
-**Delivery:** an event to an agent is `pending` until the relay publishes it, then `delivered`. For
-an interactive agent (the Analyst, or any agent with `attrs.interactive`) **or for you**, it is
-`pending` until a session claims it (`claimed`), then `delivered` when the session finishes. It is
-`held` while Ariadne waits for a System One decision, and `none` for other people and teams (they
-get a proxy card instead). A **progress** report is an FYI: it is `none` for everyone (still on the
-thread and in the graph); only done, blocked, and question reports wait for someone.
-
-## 4. One change vocabulary
-
-`create_node`, `update_node`, `delete_node`, `create_edge`, `update_edge`, `delete_edge`,
-`update_event`, `delete_event`, applied as a batch in one transaction (`ref` / `$ref` link new
-nodes). The same ops are used by:
-
-- the web UI (`POST /api/ops`). Your edits apply directly and are audited, and the Analyst sees
-  them in its next delivery (`analyst.userChanges`);
-- the Analyst (`apply_ops` over MCP);
-- agents, as `proposals` inside reports.
-
-## 5. Runtime
+## 4. Runtime
 
 ```text
 browser ──HTTP/SSE──► server (Fastify) ──► PostgreSQL
-                         │  ▲
-            relay publish │  │ inbox consume
-                         ▼  │
-                       RabbitMQ
-         ariadne.deliver → ariadne.actor.<id>      ariadne.inbox ◄── runners
-                         │
-          runners: agents (claude -p, no Ariadne MCP), deciders (Jev)
-
-Claude Code sessions ──MCP (/mcp)──► server     the Analyst, and interactive agents
+Claude Code ──MCP (/mcp)──►
 ```
 
-- **Deliveries are self-contained** (server/context.ts): the event, the recipient's briefs, the
-  tasks with inherited context, the recent thread, the supervisor, and subordinates. Headless agents never
-  call back.
-- **You come first:** `list_assignments` lists things for you first, then things from you (your
-  answers also have priority 9 on RabbitMQ).
-- **Status lines:** runners publish `status` to the inbox, and claims set one. They go out over SSE,
-  but no screen shows them yet.
-- **System One:** Ariadne asks deciders before delivering (dispatch: one difficulty score → model +
-  effort). No decider, a timeout, or low confidence →
-  defaults. Ariadne never calls a model itself.
-- **Claims** (interactive agents; the relay skips them). One `/mcp`, with no token yet (agent-specific
-  permissions come later; it is localhost only). `list_assignments` shows what's waiting (your
-  items first), with the repos each item's tasks use. The session picks the first one it can
-  handle and calls `claim_assignment`, which is atomic and returns the brief. Ariadne doesn't record
-  who claimed. `submit_result` works in any claim state, since MCP is asynchronous and the result
-  may come from another session; it fails only if the item is missing or already completed. `done`
-  completes it; `blocked`, `question`, and `progress` keep it open. Any report that closes an
-  assignment ends its claim. For an item for you, the brief tells the session to ask or tell you,
-  and your answer is the `submit_result` body. `still_working` resets the claim timer (re-claiming
-  an expired one); `waitingOnUser` makes it last `ARIADNE_CLAIM_WAIT_MINUTES` while the session waits
-  for your reply. Any other MCP call made for the item (`because` or `eventId`: `apply_ops`,
-  `get_context`, ...) is a heartbeat: it pushes the timer back (never shortens it) and re-claims an
-  item whose claim timed out. `release_assignment` puts it back (and a heartbeat doesn't re-claim it). There is no model/effort dispatch: the session
-  already runs on whatever the person chose.
-- **Timers** (`timers` table): something Ariadne does at a time, with a `kind`, a `payload`, and an
-  optional `key` (one live timer per key, so a timer can be reset or cancelled). A scheduler in the
-  server fires due ones every 15s, RabbitMQ or not. Kinds:
-  - `claim_check`: a claim with no word for `ARIADNE_CLAIM_TIMEOUT_MINUTES` goes back in the queue,
-    and you get a note (not when the stuck item was itself for you). The note is withdrawn
-    (`none`) if the item is claimed again or gets a result before a session tells you;
-  - `send`: an event sent later (`schedule_event`, `cancel_scheduled`, `list_scheduled` over MCP).
-- **Overdue:** an assignment with `dueAt` gets one "no report yet" report from Ariadne to its sender
-  (checked by the same scheduler).
-- **Undo:** `history` (grouped by changeset, filterable by the event a change was made `because`
-  of) and `undo` over MCP. An undo is refused if something changed again since. In the UI, a
-  delete shows a short "Deleted … Undo" message (`/api/ops` returns its changeset; `POST /api/undo`).
-  A fuller history view is still to be designed.
+- **MCP tools:** `get_node` (a node with its edges; for a task, readiness, inherited context, and
+  branches), `search` (text, kind, status, `decisions`), `graph` (reachable subgraph, or roots and
+  actors), `history`, `apply_ops`, `undo`. Stateless Streamable HTTP, no token: localhost only.
+- **SSE:** browsers refetch on `changed`.
+- **Undo:** `history` (grouped by changeset) and `undo` over MCP. An undo is refused if something
+  changed again since. In the UI, a delete shows a short "Deleted … Undo" message (`/api/ops` returns
+  its changeset; `POST /api/undo`). A fuller history view is still to be designed.
 
-## 6. Screens
+## 5. Screens
 
 - **Graph** (the only screen): all nodes and edges with filters (kinds, hide closed) and **focus**: pick a node to see
   what's reachable from it (down / up / both, with a depth). A side panel creates, edits, and deletes
-  nodes, edges, and events.
+  nodes and edges.
 - **Search:** the pickers (focus, add edge) match titles first, then body text, showing the matching
   line; decision lines are labelled, so typing "decision" lists them.
 - **Focus:** the focus task in the top bar is remembered across reloads. While focused, a **Show all** button on

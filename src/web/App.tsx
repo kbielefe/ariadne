@@ -24,7 +24,7 @@ export const useApp = () => useContext(Ctx)!;
 
 export function App() {
   const live = useLive();
-  const [graph, setGraph] = useState<GraphData>({ nodes: [], edges: [], assignments: [] });
+  const [graph, setGraph] = useState<GraphData>({ nodes: [], edges: [] });
   const [focus, setFocusState] = useState<string | null>(() => remember.get('focus'));
   const [selected, setSelected] = useState<string | null>(null);
   const [kick, setKick] = useState(0);

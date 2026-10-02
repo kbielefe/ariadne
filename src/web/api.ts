@@ -1,16 +1,14 @@
 import { useEffect, useState } from 'react';
-import type { Edge, Event, Node, Op } from '../shared/model';
+import type { Edge, Node, Op } from '../shared/model';
 
 export interface GraphData {
   nodes: Node[];
   edges: Edge[];
-  assignments: { eventId: string; recipient: string; tasks: string[] }[];
 }
 export interface NodeDetail {
   node: Node;
   edges: Edge[];
   neighbors: Node[];
-  events: Event[];
   readiness?: { ready: boolean; waitingOn: string[] };
 }
 

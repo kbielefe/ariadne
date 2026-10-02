@@ -1,8 +1,9 @@
-# Ariadne v2
+# Ariadne
 
-**A task graph for working with people, teams, and agents.** You talk to the Analyst in an
-interactive Claude Code session (over MCP). It keeps the graph up to date, delegates to agents, and
-brings you only what needs you. The web UI is the graph view. The design and its reasons are in
+**A task and org graph you keep with Claude Code.** Tasks, people, teams, and resources, linked by
+what needs what and who's involved. You direct Claude Code in an interactive session (over MCP) to
+look things up and update the graph; the web UI is the graph view, for the big picture and manual
+edits. Every change is audited and can be undone. The design and its reasons are in
 [docs/DESIGN.md](docs/DESIGN.md).
 
 > **Localhost only.** Neither the web UI nor `/mcp` has authentication yet.
@@ -12,7 +13,7 @@ brings you only what needs you. The web UI is the graph view. The design and its
 1. Configure:
 
    ```sh
-   cp .env.example .env        # set POSTGRES_PASSWORD and RABBITMQ_PASSWORD (openssl rand -hex 24)
+   cp .env.example .env        # set POSTGRES_PASSWORD (openssl rand -hex 24)
    ```
 
 2. Start it (the first build needs the VPN for npm), then open <http://127.0.0.1:3100>:
@@ -27,43 +28,26 @@ brings you only what needs you. The web UI is the graph view. The design and its
    claude mcp add --scope user --transport http ariadne http://127.0.0.1:3100/mcp
    ```
 
-   In any repo, say *"Handle the next ariadne assignment."* Claude calls `list_assignments`: things
-   for you first (questions and notes it should ask or tell you), then your answers and agent reports
-   for the Analyst, plus assignments for agents marked **interactive (Claude Code)**. Each item shows
-   the repos its tasks use (and any shared branch). It claims the first one it can
-   handle there with `claim_assignment`, does the work, and calls `submit_result`. A claim with no word
-   for `ARIADNE_CLAIM_TIMEOUT_MINUTES` (default 30) goes back on the list and you're told;
-   any call that passes the item's id (`because` / `eventId`) or `still_working` resets the clock, and
-   `still_working` with `waitingOnUser` holds it for `ARIADNE_CLAIM_WAIT_MINUTES` (default 480) while
-   the session waits on you. Ariadne doesn't track which session claimed what: any session can submit
-   a result.
+   Then just ask: *"What's ready under the SSO task?"*, *"Add a subtask for the docs and involve
+   Bryan"*, *"Record that we decided to skip signing"*.
 
-4. Optional: headless agents over RabbitMQ. Create the agent in the Graph view and make it report to
-   the Analyst. Then run:
-
-   ```sh
-   ARIADNE_AMQP_URL=amqp://ariadne:$RABBITMQ_PASSWORD@127.0.0.1:5674/ariadne AGENT_CWD=~/src/some-repo AGENT_ARGS='["--permission-mode","acceptEdits"]' pnpm runner agent <agentId>
-   SYSTEMONE_API_KEY_FILE=~/.jev-key ARIADNE_AMQP_URL=… pnpm runner decider <deciderId>   # mark that agent "System One decider"
-   ```
-
-v1 keeps running on port 3000. v2 uses 3100 (web) and 5674 (RabbitMQ).
+To deploy UI or server changes: `podman compose build app && podman compose up -d --force-recreate app`.
 
 ## Development
 
 | Command | What it does |
 |---|---|
-| `scripts/dev-db.sh`, `scripts/dev-rabbit.sh` | Start a throwaway PostgreSQL (55433) and RabbitMQ (5673) |
+| `scripts/dev-db.sh` | Start a throwaway PostgreSQL (55433) |
 | `podman exec ariadne2-devdb psql -U ariadne -d ariadne_test -c 'CREATE DATABASE ariadne_dev'` | Create the dev database (once) |
-| `pnpm build && scripts/dev-up.sh` | Run the server on 3100 against them. `scripts/dev-up.sh stop` stops it |
-| `pnpm tsx scripts/demo.ts` | Seed demo data through the real API and MCP (**never against real data**) |
-| `pnpm test` | Unit, DB, and RabbitMQ tests (the dev DB and dev RabbitMQ must be running) |
+| `pnpm build && scripts/dev-up.sh` | Run the server on 3100 against it. `scripts/dev-up.sh stop` stops it |
+| `pnpm tsx scripts/demo.ts` | Seed demo data through the real MCP (**never against real data**) |
+| `pnpm test` | Unit and DB tests (the dev DB must be running) |
 | `pnpm typecheck` | TypeScript |
 
 ## Layout
 
 | Path | Holds |
 |---|---|
-| `src/shared` | The vocabulary: node kinds, edge rules, events, cards, ops, bus names, graph helpers |
-| `src/server` | Fastify API + SSE, MCP (incl. claims), core rules, timers, context packs, RabbitMQ relay and inbox |
+| `src/shared` | The vocabulary: node kinds, edge rules, ops, graph helpers |
+| `src/server` | Fastify API + SSE, MCP, ops and undo, task context |
 | `src/web` | React: the graph view (cytoscape) |
-| `src/runner` | Headless agent and decider runners, and the prompts/briefs |

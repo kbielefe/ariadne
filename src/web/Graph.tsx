@@ -3,7 +3,7 @@ import dagre from 'cytoscape-dagre';
 import { ArrowDownUp, Crosshair, Expand, Maximize, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Plus } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { type Direction, readiness, reachable } from '../shared/graph';
-import { EDGE_RULES, type EdgeKind, EdgeKind as EdgeKinds, type NodeKind, USER_ID } from '../shared/model';
+import { EDGE_RULES, type EdgeKind, EdgeKind as EdgeKinds, type NodeKind } from '../shared/model';
 import { remember } from './api';
 import { useApp } from './App';
 import { KindIcon } from './bits';
@@ -12,18 +12,17 @@ import { DEFAULT_SORT, isSort, layoutOptions, orderLeafSiblings, rankDir, SORTS,
 
 cytoscape.use(dagre);
 
-const NODE_KINDS: NodeKind[] = ['task', 'person', 'agent', 'team', 'resource'];
+const NODE_KINDS: NodeKind[] = ['task', 'person', 'team', 'resource'];
 
 interface Filters {
   kinds: NodeKind[];
   edges: EdgeKind[];
   showClosed: boolean;
-  showAssigned: boolean;
   direction: Direction;
   depth: number;
 }
 
-const DEFAULT_FILTERS: Filters = { kinds: NODE_KINDS, edges: [...EdgeKinds.options], showClosed: false, showAssigned: true, direction: 'down', depth: 0 };
+const DEFAULT_FILTERS: Filters = { kinds: NODE_KINDS, edges: [...EdgeKinds.options], showClosed: false, direction: 'down', depth: 0 };
 
 function loadSort(): Sort {
   const s = remember.get('graphSort');
@@ -32,7 +31,8 @@ function loadSort(): Sort {
 
 function loadFilters(): Filters {
   try {
-    return { ...DEFAULT_FILTERS, ...JSON.parse(remember.get('graphFilters') ?? '{}') };
+    const f: Filters = { ...DEFAULT_FILTERS, ...JSON.parse(remember.get('graphFilters') ?? '{}') };
+    return { ...f, kinds: f.kinds.filter((k) => NODE_KINDS.includes(k)) };
   } catch {
     return DEFAULT_FILTERS;
   }
@@ -80,8 +80,6 @@ export function GraphView({ selected, onSelect }: { selected: string | null; onS
       const r = reachable(edges, focus, { direction: f.direction, ...(f.depth ? { depth: f.depth } : {}) });
       ids = new Set([...ids].filter((id) => r.has(id)));
       ids.add(focus);
-      // Who is working on what you're looking at.
-      if (f.showAssigned) for (const a of graph.assignments) if (a.recipient !== USER_ID && a.tasks.some((t) => ids.has(t)) && f.kinds.includes(byId.get(a.recipient)?.kind ?? 'task')) ids.add(a.recipient);
     }
     const els: ElementDefinition[] = [];
     // Elements carry their place in the sort; the layout lays siblings out in that order.
@@ -94,15 +92,10 @@ export function GraphView({ selected, onSelect }: { selected: string | null; onS
         if (n.status === 'open') classes.push(readiness(n, graph.edges, byId).ready ? 'ready' : 'waiting');
         if (!graph.edges.some((e) => e.kind === 'needs' && e.dst === id)) classes.push('root');
       }
-      if (n.attrs.paused) classes.push('paused');
       if (id === focus) classes.push('focus');
       els.push({ group: 'nodes', data: { id, label: n.title.length > 64 ? `${n.title.slice(0, 63)}…` : n.title, title: n.title, order: order.get(id) }, classes: classes.join(' ') });
     }
     for (const e of edges) if (ids.has(e.src) && ids.has(e.dst)) els.push({ group: 'edges', data: { id: e.id, source: e.src, target: e.dst, label: e.kind === 'needs' ? '' : EDGE_RULES[e.kind].label, order: order.get(e.dst) }, classes: e.kind });
-    if (f.showAssigned)
-      for (const a of graph.assignments.filter((x) => x.recipient !== USER_ID)) // items for you are handled in Claude Code
-        for (const t of a.tasks)
-          if (ids.has(t) && ids.has(a.recipient)) els.push({ group: 'edges', data: { id: `as:${a.eventId}:${t}`, source: t, target: a.recipient, label: 'assigned', order: order.get(a.recipient) }, classes: 'assigned' });
     return els;
   }, [graph, byId, f, focus, sort]);
 
@@ -130,9 +123,6 @@ export function GraphView({ selected, onSelect }: { selected: string | null; onS
               <input type="checkbox" checked={f.edges.includes(k)} onChange={(e) => update({ edges: e.target.checked ? [...f.edges, k] : f.edges.filter((x) => x !== k) })} /> {EDGE_RULES[k].label}
             </label>
           ))}
-          <label className="check">
-            <input type="checkbox" checked={f.showAssigned} onChange={(e) => update({ showAssigned: e.target.checked })} /> assigned (open work)
-          </label>
         </fieldset>
         <fieldset disabled={!focus}>
           <legend>
@@ -284,7 +274,6 @@ function styles(): cytoscape.StylesheetJson {
   const surface = css('--surface', '#ffffff');
   const accent = css('--accent', '#2563eb');
   const good = css('--good', '#15803d');
-  const warn = css('--warn', '#b45309');
   return [
     {
       selector: 'node',
@@ -310,10 +299,8 @@ function styles(): cytoscape.StylesheetJson {
     { selector: 'node.task.done, node.task.dropped', style: { color: muted, opacity: 0.6 } },
     { selector: 'node.task.dropped', style: { 'text-decoration': 'line-through' } as never },
     { selector: 'node.person', style: { shape: 'ellipse', width: 120, 'background-color': css('--person', '#eef2ff') } },
-    { selector: 'node.agent', style: { shape: 'hexagon', width: 130, 'background-color': css('--agent', '#ecfdf5') } },
     { selector: 'node.team', style: { shape: 'octagon', width: 130, 'background-color': css('--team', '#fef3c7') } },
     { selector: 'node.resource', style: { shape: 'tag', width: 140, 'background-color': css('--resource', '#f3f4f6') } },
-    { selector: 'node.paused', style: { opacity: 0.5 } },
     { selector: 'node.focus', style: { 'border-color': accent, 'border-width': 4 } },
     { selector: 'node:selected', style: { 'overlay-color': accent, 'overlay-opacity': 0.15, 'overlay-padding': 6 } },
     {
@@ -335,7 +322,6 @@ function styles(): cytoscape.StylesheetJson {
     { selector: 'edge.needs', style: { width: 2, 'line-color': muted, 'target-arrow-color': muted } },
     { selector: 'edge.uses', style: { 'line-style': 'dashed' } },
     { selector: 'edge.involves', style: { 'line-style': 'dotted' } },
-    { selector: 'edge.assigned', style: { 'line-color': warn, 'target-arrow-color': warn, 'line-style': 'dashed', color: warn } },
     { selector: 'edge:selected', style: { 'line-color': accent, 'target-arrow-color': accent, width: 3 } },
   ];
 }
@@ -409,7 +395,7 @@ function Canvas({ elements, sort, selected, onSelect, onFocus }: { elements: Ele
 
   return (
     <>
-      <div ref={box} className="canvas" role="img" aria-label="Graph of tasks, people, agents, teams, and resources" />
+      <div ref={box} className="canvas" role="img" aria-label="Graph of tasks, people, teams, and resources" />
       <button className="icon fit" aria-label="Fit to screen" onClick={() => cy.current?.animate({ fit: { eles: cy.current.elements(), padding: 30 } }, { duration: 200 })}>
         <Maximize size={16} />
       </button>

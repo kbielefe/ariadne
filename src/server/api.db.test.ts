@@ -3,9 +3,8 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import Fastify, { type FastifyInstance } from 'fastify';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { freshCore } from '../test/db';
-import { ANALYST_ID, USER_ID } from '../shared/model';
+import { USER_ID } from '../shared/model';
 import { registerApi } from './api';
-import { ContextBuilder } from './context';
 import type { Core } from './core';
 import type { Db } from './db';
 import * as s from './store';
@@ -44,11 +43,10 @@ const call = async <T = Record<string, unknown>>(client: Client, name: string, a
 };
 
 describe('MCP', () => {
-  it('lets the analyst build the graph, leave you a question, and see your answer', async () => {
+  it('lets Claude Code build the graph, look at it, and undo from the history', async () => {
     const client = await mcp();
     const { tools } = await client.listTools();
-    expect(tools.map((t) => t.name)).toEqual(expect.arrayContaining(['apply_ops', 'assign', 'ask_user', 'tell_user', 'decide', 'graph', 'undo']));
-    expect(tools.map((t) => t.name)).not.toContain('reply');
+    expect(tools.map((t) => t.name).sort()).toEqual(['apply_ops', 'get_node', 'graph', 'history', 'search', 'undo']);
 
     const r = await client.callTool({
       name: 'apply_ops',
@@ -68,33 +66,67 @@ describe('MCP', () => {
 
     const g = await client.callTool({ name: 'graph', arguments: { from: root } });
     expect((g.structuredContent as { nodes: { title: string }[] }).nodes.map((n) => n.title).sort()).toEqual(['Schema', 'Ship v2']);
+    const top = await call<{ nodes: { title: string }[] }>(client, 'graph', {});
+    expect(top.nodes.map((n) => n.title).sort()).toEqual(['Ship v2', 'You']);
 
-    const { id: cardId } = await call<{ id: string }>(client, 'ask_user', {
-      tasks: [root],
-      body: 'Two subtasks so far.',
-      card: { kind: 'approval', title: 'Approve the breakdown?', actions: [{ id: 'yes', label: 'Approve', style: 'primary' }, { id: 'no', label: 'Change it' }] },
-    });
-
-    // A session claims the card and asks you; your answer goes back to the Analyst.
-    const got = await call<{ brief: string }>(client, 'claim_assignment', { eventId: cardId });
-    expect(got.brief).toContain('Ask the user: Approve the breakdown?');
-    expect(got.brief).toContain('Approve / Change it');
-    await call(client, 'submit_result', { eventId: cardId, status: 'done', body: 'Approve' });
-    const events = await call<{ items: { from: string; body: string }[] }>(client, 'list_events', { actor: ANALYST_ID, kind: 'report' });
-    expect(events.items).toMatchObject([{ from: 'You (the user)', body: 'Approve' }]);
-
-    // Undo the Analyst's changes from the history.
-    const hist = await call<{ items: { changeset: string; entity: string }[] }>(client, 'history', {});
-    const cs = hist.items.find((h) => h.entity === 'node')!.changeset;
-    await call(client, 'undo', { changeset: cs });
+    const hist = await call<{ items: { changeset: string; entity: string; actor: string | null; via: string }[] }>(client, 'history', {});
+    const made = hist.items.find((h) => h.entity === 'node')!;
+    expect(made).toMatchObject({ actor: null, via: 'mcp' });
+    await call(client, 'undo', { changeset: made.changeset });
     expect((await core.graph()).nodes.filter((n) => n.kind === 'task')).toEqual([]);
+    await client.close();
+  });
+
+  it('says which tasks just became ready when apply_ops closes tasks', async () => {
+    const [root, a, b, next] = (
+      await core.ops(who(USER_ID, 'ui'), [
+        { op: 'create_node', ref: 'root', kind: 'task', title: 'Ship it' },
+        { op: 'create_node', ref: 'a', kind: 'task', title: 'Build' },
+        { op: 'create_node', ref: 'b', kind: 'task', title: 'Test' },
+        { op: 'create_node', ref: 'next', kind: 'task', title: 'Demo' },
+        { op: 'create_edge', src: '$root', kind: 'needs', dst: '$a' },
+        { op: 'create_edge', src: '$root', kind: 'needs', dst: '$b' },
+        { op: 'create_edge', src: '$next', kind: 'needs', dst: '$a' },
+      ])
+    )
+      .filter((x) => x.ref)
+      .map((x) => x.id) as string[];
+    const client = await mcp();
+    // Closing Build makes Demo ready; Ship it still waits on Test.
+    expect((await call<{ nowReady?: unknown[] }>(client, 'apply_ops', { ops: [{ op: 'update_node', id: a, status: 'done' }] })).nowReady).toEqual([{ id: next, title: 'Demo' }]);
+    // Only tasks this batch closed count; nothing new: no nowReady.
+    expect((await call<{ nowReady?: unknown[] }>(client, 'apply_ops', { ops: [{ op: 'update_node', id: a, status: 'done' }] })).nowReady).toBeUndefined();
+    expect((await call<{ nowReady?: unknown[] }>(client, 'apply_ops', { ops: [{ op: 'update_node', id: b, status: 'dropped' }] })).nowReady).toEqual([{ id: root, title: 'Ship it' }]);
+    await client.close();
+  });
+
+  it("get_node gives a task's inherited context and the branches it ships on", async () => {
+    const r = await core.ops(who(USER_ID, 'ui'), [
+      { op: 'create_node', ref: 'b', kind: 'resource', title: 'PDP first tag', attrs: { type: 'branch', repo: 'pdp', branch: 'feature/first-tag' } },
+      { op: 'create_node', ref: 'tag', kind: 'task', title: 'Cut the first PDP tag', attrs: { guidance: 'Small commits.' } },
+      { op: 'create_node', ref: 'a', kind: 'task', title: 'Add the parser' },
+      { op: 'create_node', ref: 'c', kind: 'task', title: 'Add the CLI' },
+      { op: 'create_node', ref: 'x', kind: 'task', title: 'Unrelated', status: 'dropped' },
+      { op: 'create_node', ref: 'solo', kind: 'task', title: 'No branch' },
+      { op: 'create_edge', src: '$tag', kind: 'uses', dst: '$b' },
+      { op: 'create_edge', src: '$tag', kind: 'needs', dst: '$a' },
+      { op: 'create_edge', src: '$tag', kind: 'needs', dst: '$c' },
+      { op: 'create_edge', src: '$tag', kind: 'needs', dst: '$x' },
+    ]);
+    const id = (ref: string) => r.find((x) => x.ref === ref)!.id;
+    const client = await mcp();
+    const d = await call<{ context: { guidance: unknown[]; ready: boolean }; branches: { name: string; repo: string; branch: string; tasks: { title: string }[] }[] }>(client, 'get_node', { id: id('a') });
+    expect(d.context).toMatchObject({ ready: true, guidance: [{ from: { title: 'Cut the first PDP tag' }, item: 'Small commits.' }] });
+    expect(d.branches).toMatchObject([{ name: 'PDP first tag', repo: 'pdp', branch: 'feature/first-tag' }]);
+    expect(d.branches[0]!.tasks.map((t) => t.title).sort()).toEqual(['Add the CLI', 'Add the parser', 'Cut the first PDP tag']);
+    expect(await call(client, 'get_node', { id: id('solo') })).not.toHaveProperty('branches');
     await client.close();
   });
 });
 
 describe('decisions', () => {
   it('search with decisions: true finds decision lines in bodies, and only those nodes', async () => {
-    await core.ops(who(ANALYST_ID, 'mcp'), [
+    await core.ops(who(null, 'mcp'), [
       { op: 'create_node', kind: 'task', title: 'Sign builds', body: 'Context.\n\n**Decision (Karl, 2026-10-01):** skip signing for now.\n\nMore.' },
       { op: 'create_node', kind: 'task', title: 'Versioning', body: '- **Decision (Karl):** Jenkins sets the version.\n  **Decision:** DECISION_LOG_URL is optional' },
       { op: 'create_node', kind: 'task', title: 'Talks about it', body: 'We need a **Decision (Karl):** soon, mid-line.' },
@@ -113,201 +145,6 @@ describe('decisions', () => {
   });
 });
 
-describe('claims', () => {
-  it('lists what is waiting, claims each item once, and takes results whatever the claim state', async () => {
-    const [agent, , , sub, loose] = (
-      await core.ops(who(USER_ID, 'ui'), [
-        { op: 'create_node', ref: 'cc', kind: 'agent', title: 'Coder', attrs: { interactive: true } },
-        { op: 'create_edge', src: '$cc', kind: 'reports_to', dst: ANALYST_ID },
-        { op: 'create_node', ref: 'r', kind: 'resource', title: 'ariadne', attrs: { type: 'repo', url: 'https://github.com/kb/ariadne' } },
-        { op: 'create_node', ref: 'root', kind: 'task', title: 'Ship v2' },
-        { op: 'create_node', ref: 'sub', kind: 'task', title: 'Add claims' },
-        { op: 'create_node', ref: 'loose', kind: 'task', title: 'Write the memo' },
-        { op: 'create_edge', src: '$root', kind: 'uses', dst: '$r' },
-        { op: 'create_edge', src: '$root', kind: 'needs', dst: '$sub' },
-      ])
-    )
-      .filter((x) => x.ref)
-      .map((x) => x.id) as string[];
-    const memo = await core.send(who(ANALYST_ID, 'mcp'), { kind: 'assign', recipient: agent!, body: 'Draft the memo', tasks: [loose!] });
-    const code = await core.send(who(ANALYST_ID, 'mcp'), { kind: 'assign', recipient: agent!, body: 'Add claims', tasks: [sub!] });
-    const fyi = await core.send(who(ANALYST_ID, 'mcp'), { kind: 'report', recipient: USER_ID, body: 'The memo is next.' });
-
-    const client = await mcp();
-    type Item = { eventId: string; as: string; repos: { name: string; url?: string }[]; tasks: { title: string }[] };
-    const list = async () => (await call<{ items: Item[] }>(client, 'list_assignments', {})).items;
-    // Things for you first, then oldest; each with the repos its tasks use (inherited).
-    const items = await list();
-    expect(items.map((i) => i.eventId)).toEqual([fyi.id, memo.id, code.id]);
-    expect(items[0]!.as).toBe('You (the user)');
-    expect(items[2]).toMatchObject({ as: 'Coder', tasks: [{ title: 'Add claims' }], repos: [{ name: 'ariadne', url: 'https://github.com/kb/ariadne' }] });
-    expect(items[1]!.repos).toEqual([]);
-
-    // A claim is exclusive and takes the item off the list.
-    const got = await call<{ brief: string }>(client, 'claim_assignment', { eventId: code.id });
-    expect(got.brief).toContain('submit_result');
-    expect((await client.callTool({ name: 'claim_assignment', arguments: { eventId: code.id } })).isError).toBe(true);
-    expect((await list()).map((i) => i.eventId)).toEqual([fyi.id, memo.id]);
-    expect(await core.listTimers({ kind: 'claim_check' })).toHaveLength(1);
-
-    // Released work goes back on the list.
-    await call(client, 'claim_assignment', { eventId: memo.id });
-    await call(client, 'release_assignment', { eventId: memo.id });
-    expect((await list()).map((i) => i.eventId)).toContain(memo.id);
-
-    // Results: invalid ones are refused; a valid one closes the assignment and reaches the Analyst with its proposals.
-    expect((await client.callTool({ name: 'submit_result', arguments: { eventId: code.id, status: 'done', body: 'x', proposals: [{ op: 'explode' }] } })).isError).toBe(true);
-    expect((await client.callTool({ name: 'submit_result', arguments: { eventId: code.id, status: 'done' } })).isError).toBe(true);
-    await call(client, 'submit_result', { eventId: code.id, status: 'done', body: 'Added claims.', proposals: [{ op: 'create_node', kind: 'task', title: 'Document it' }] });
-    expect(await s.getEvent(db, code.id)).toMatchObject({ state: 'closed', delivery: 'delivered' });
-    const [report] = await s.listEvents(db, { kind: 'report', actor: agent! });
-    expect(report).toMatchObject({ sender: agent, recipient: ANALYST_ID, replyTo: code.id, body: 'Added claims.', proposals: [{ title: 'Document it' }], delivery: 'pending' });
-    expect(await core.listTimers({ kind: 'claim_check' })).toEqual([]);
-    // Completed or unknown: errors.
-    expect((await client.callTool({ name: 'submit_result', arguments: { eventId: code.id, status: 'done', body: 'again' } })).isError).toBe(true);
-    expect((await client.callTool({ name: 'submit_result', arguments: { eventId: '99999999-9999-4999-8999-999999999999', status: 'done', body: 'x' } })).isError).toBe(true);
-
-    // A result for an item no one claimed (another session, or a lost claim) still counts.
-    await call(client, 'submit_result', { eventId: memo.id, status: 'progress', body: 'Outline done.' });
-    expect(await s.getEvent(db, memo.id)).toMatchObject({ state: 'open', delivery: 'pending' });
-    // Progress is an FYI: on the thread, but queued for no one. A question still needs an answer.
-    const thread = async () => (await s.listEvents(db, { kind: 'report', actor: agent! })).filter((e) => e.replyTo === memo.id);
-    expect((await thread()).map((e) => [e.body, e.delivery])).toEqual([['**Progress.** Outline done.', 'none']]);
-    await call(client, 'submit_result', { eventId: memo.id, status: 'question', body: 'Which audience?' });
-    expect((await thread()).map((e) => e.delivery)).toEqual(['none', 'pending']);
-    await call(client, 'submit_result', { eventId: memo.id, status: 'done', body: 'Memo drafted.' });
-    expect(await s.getEvent(db, memo.id)).toMatchObject({ state: 'closed', delivery: 'delivered' });
-
-    // The Analyst handles the agent's report: done marks it handled, and it leaves the list.
-    await call(client, 'claim_assignment', { eventId: report!.id });
-    await call(client, 'submit_result', { eventId: report!.id, status: 'done' });
-    expect((await s.getEvent(db, report!.id)).delivery).toBe('delivered');
-    expect((await list()).map((i) => i.eventId)).not.toContain(report!.id);
-
-    // The note for you: the brief says to tell you; done marks it delivered.
-    const brief = await call<{ brief: string }>(client, 'claim_assignment', { eventId: fyi.id });
-    expect(brief.brief).toMatch(/^Notify the user/);
-    expect(brief.brief).toContain('The memo is next.');
-    await call(client, 'submit_result', { eventId: fyi.id, status: 'done' });
-    expect((await s.getEvent(db, fyi.id)).delivery).toBe('delivered');
-    await client.close();
-  });
-
-  it('releases a stuck claim and tells you; still_working keeps the claim honest', async () => {
-    const note = await core.send(who(null, 'core'), { kind: 'report', recipient: ANALYST_ID, body: 'What is next?' });
-    const client = await mcp();
-    const got = await call<{ brief: string }>(client, 'claim_assignment', { eventId: note.id });
-    expect(got.brief).toContain('You are the Analyst');
-    expect((await s.getEvent(db, note.id)).delivery).toBe('claimed');
-
-    // Nothing heard: past the deadline Ariadne releases it and tells you. still_working pushes the deadline back.
-    const { timesOutAt } = await call<{ timesOutAt: string }>(client, 'still_working', { eventId: note.id, minutes: 60 });
-    expect(new Date(timesOutAt).getTime()).toBeGreaterThan(Date.now() + 50 * 60_000);
-    expect(await core.fireDue(new Date(Date.now() + 30 * 60_000))).toBe(0);
-    expect(await core.fireDue(new Date(Date.now() + 61 * 60_000))).toBe(1);
-    expect((await s.getEvent(db, note.id)).delivery).toBe('pending');
-    const fyi = (await s.listEvents(db, { kind: 'report', actor: USER_ID })).find((e) => e.sender === null);
-    expect(fyi).toMatchObject({ recipient: USER_ID, delivery: 'pending' });
-    expect(fyi?.body).toMatch(/Released a stuck claim/);
-
-    // A stuck claim on something for you just goes back on the list, with no notice about the notice.
-    await call(client, 'claim_assignment', { eventId: fyi!.id });
-    expect(await core.fireDue(new Date(Date.now() + 31 * 60_000))).toBe(1);
-    expect((await s.getEvent(db, fyi!.id)).delivery).toBe('pending');
-    expect((await s.listEvents(db, { kind: 'report', actor: USER_ID })).filter((e) => e.sender === null)).toHaveLength(1);
-
-    // A session still on it after the claim expired re-claims it with still_working; the release notice is now stale.
-    await call(client, 'still_working', { eventId: note.id });
-    expect((await s.getEvent(db, note.id)).delivery).toBe('claimed');
-    expect((await s.getEvent(db, fyi!.id)).delivery).toBe('none');
-
-    // Done completes it and ends the claim; submit_result then says it's completed.
-    await call(client, 'submit_result', { eventId: note.id, status: 'done' });
-    expect((await s.getEvent(db, note.id)).delivery).toBe('delivered');
-    expect(await core.listTimers()).toEqual([]);
-    expect((await client.callTool({ name: 'submit_result', arguments: { eventId: note.id, status: 'done' } })).isError).toBe(true);
-    await client.close();
-  });
-
-  it('any call made for a claimed item keeps the claim alive, and waiting on you lasts longer', async () => {
-    const note = await core.send(who(null, 'core'), { kind: 'report', recipient: ANALYST_ID, body: 'Plan the week' });
-    const client = await mcp();
-    await call(client, 'claim_assignment', { eventId: note.id });
-    const deadline = async () => new Date((await core.listTimers({ kind: 'claim_check' }))[0]!.at).getTime();
-    const mins = (m: number) => Date.now() + m * 60_000;
-
-    // A change made because of the item pushes the deadline back, like still_working.
-    await call(client, 'still_working', { eventId: note.id, minutes: 1 });
-    expect(await deadline()).toBeLessThan(mins(2));
-    await call(client, 'apply_ops', { ops: [{ op: 'create_node', kind: 'task', title: 'Plan' }], because: note.id });
-    expect(await deadline()).toBeGreaterThan(mins(25));
-
-    // Waiting on you: a much longer claim, which later calls don't shorten.
-    const { timesOutAt } = await call<{ timesOutAt: string }>(client, 'still_working', { eventId: note.id, waitingOnUser: true });
-    expect(new Date(timesOutAt).getTime()).toBeGreaterThan(mins(7 * 60));
-    await call(client, 'get_context', { eventId: note.id });
-    expect(await deadline()).toBe(new Date(timesOutAt).getTime());
-
-    // A session still on it after its claim ran out claims it again just by calling for it.
-    expect(await core.fireDue(new Date(mins(9 * 60)))).toBe(1);
-    expect((await s.getEvent(db, note.id)).delivery).toBe('pending');
-    await call(client, 'get_context', { eventId: note.id });
-    expect((await s.getEvent(db, note.id)).delivery).toBe('claimed');
-    const notices = (await s.listEvents(db, { kind: 'report', actor: USER_ID })).filter((e) => e.sender === null);
-    expect(notices.map((e) => e.delivery)).toEqual(['none']);
-
-    // But not after it was given back on purpose.
-    await call(client, 'release_assignment', { eventId: note.id });
-    await call(client, 'get_context', { eventId: note.id });
-    expect((await s.getEvent(db, note.id)).delivery).toBe('pending');
-    await client.close();
-  });
-
-  it('says which tasks just became ready when tasks close, in apply_ops and the done report', async () => {
-    const [root, a, b, next] = (
-      await core.ops(who(USER_ID, 'ui'), [
-        { op: 'create_node', ref: 'root', kind: 'task', title: 'Ship it' },
-        { op: 'create_node', ref: 'a', kind: 'task', title: 'Build' },
-        { op: 'create_node', ref: 'b', kind: 'task', title: 'Test' },
-        { op: 'create_node', ref: 'next', kind: 'task', title: 'Demo' },
-        { op: 'create_edge', src: '$root', kind: 'needs', dst: '$a' },
-        { op: 'create_edge', src: '$root', kind: 'needs', dst: '$b' },
-        { op: 'create_edge', src: '$next', kind: 'needs', dst: '$a' },
-      ])
-    )
-      .filter((x) => x.ref)
-      .map((x) => x.id) as string[];
-    const ask = await core.send(who(USER_ID, 'mcp'), { kind: 'assign', recipient: ANALYST_ID, body: 'Build it', tasks: [a!] });
-    const client = await mcp();
-    await call(client, 'claim_assignment', { eventId: ask.id });
-
-    // Closing Build makes Demo ready; Ship it still waits on Test.
-    const closed = await call<{ nowReady?: unknown[] }>(client, 'apply_ops', { ops: [{ op: 'update_node', id: a, status: 'done' }], because: ask.id });
-    expect(closed.nowReady).toEqual([{ id: next, title: 'Demo' }]);
-    const done = await call<{ reportId: string; nowReady?: unknown[] }>(client, 'submit_result', { eventId: ask.id, status: 'done', body: 'Built.' });
-    expect(done.nowReady).toEqual([{ id: next, title: 'Demo' }]);
-    expect((await s.getEvent(db, done.reportId)).body).toBe(`Built.\n\nNow ready:\n- Demo (${next})`);
-
-    // Only tasks this batch closed count; nothing new: no nowReady.
-    expect((await call<{ nowReady?: unknown[] }>(client, 'apply_ops', { ops: [{ op: 'update_node', id: a, status: 'done' }] })).nowReady).toBeUndefined();
-    expect((await call<{ nowReady?: unknown[] }>(client, 'apply_ops', { ops: [{ op: 'update_node', id: b, status: 'dropped' }] })).nowReady).toEqual([{ id: root, title: 'Ship it' }]);
-    await client.close();
-  });
-
-  it('schedules events, cancels them, and sends the due ones', async () => {
-    const client = await mcp();
-    const keep = await call<{ id: string }>(client, 'schedule_event', { inMinutes: 10, event: { kind: 'report', to: USER_ID, body: 'Stand-up in 5' } });
-    const drop = await call<{ id: string }>(client, 'schedule_event', { at: new Date(Date.now() + 5 * 60_000).toISOString(), event: { kind: 'report', to: USER_ID, body: 'Never mind' } });
-    expect((await client.callTool({ name: 'schedule_event', arguments: { event: { kind: 'report', to: USER_ID, body: 'when?' } } })).isError).toBe(true);
-    await call(client, 'cancel_scheduled', { id: drop.id });
-    expect((await call<{ items: { id: string }[] }>(client, 'list_scheduled', {})).items.map((t) => t.id)).toEqual([keep.id]);
-    expect(await core.fireDue(new Date(Date.now() + 11 * 60_000))).toBe(1);
-    const sent = await s.listEvents(db, { kind: 'report', actor: USER_ID });
-    expect(sent.map((e) => [e.sender, e.body])).toEqual([[ANALYST_ID, 'Stand-up in 5']]);
-    await client.close();
-  });
-});
-
 describe('web API', () => {
   it('applies your edits directly, refuses other hosts, and reports bad input', async () => {
     const ok = await post('/api/ops', { ops: [{ op: 'create_node', kind: 'task', title: 'Mine' }] });
@@ -321,24 +158,12 @@ describe('web API', () => {
     expect(cross.status).toBe(403);
     const hist = (await (await fetch(`${base}/api/history`)).json()) as { who: string; line: string }[];
     expect(hist).toMatchObject([{ who: 'You (the user)', line: 'created task "Mine"' }]);
-  });
-
-  it("shows a task's reports in its details: only events linked to it, oldest first", async () => {
-    const [task, other] = (
-      await core.ops(who(USER_ID, 'ui'), [
-        { op: 'create_node', ref: 't', kind: 'task', title: 'Ship it' },
-        { op: 'create_node', ref: 'o', kind: 'task', title: 'Something else' },
-      ])
-    ).map((x) => x.id);
-    const first = await core.send(who(ANALYST_ID, 'mcp'), { kind: 'report', recipient: USER_ID, body: 'Started.', tasks: [task!] });
-    await core.send(who(ANALYST_ID, 'mcp'), { kind: 'report', recipient: USER_ID, body: 'Unrelated.', tasks: [other!] });
-    const second = await core.send(who(ANALYST_ID, 'mcp'), { kind: 'report', recipient: USER_ID, body: '## Done\n\nShipped.', tasks: [task!, other!] });
-
-    const detail = (await (await fetch(`${base}/api/nodes/${task}`)).json()) as { events: { id: string; body: string; tasks: string[] }[] };
-    expect(detail.events.map((e) => e.id)).toEqual([first.id, second.id]);
-    expect(detail.events[1]).toMatchObject({ body: '## Done\n\nShipped.', tasks: expect.arrayContaining([task, other]) });
-    const byTask = (await (await fetch(`${base}/api/events?task=${task}`)).json()) as { id: string }[];
-    expect(byTask.map((e) => e.id)).toEqual([first.id, second.id]);
+    // Changes over MCP have no actor: the history says they came from Claude.
+    const client = await mcp();
+    await call(client, 'apply_ops', { ops: [{ op: 'update_node', id: (await s.listNodes(db, { query: 'Mine' }))[0]!.id, title: 'Mine!' }] });
+    await client.close();
+    const after = (await (await fetch(`${base}/api/history`)).json()) as { who: string; via: string; line: string }[];
+    expect(after.at(-1)).toMatchObject({ who: 'Claude (MCP)', via: 'mcp', line: 'updated task "Mine!": title' });
   });
 
   it('returns the changeset of your edit, so Undo can revert it', async () => {
@@ -351,56 +176,5 @@ describe('web API', () => {
     expect(undo.status).toBe(200);
     expect((await s.getNode(db, id)).title).toBe('Old repo');
     expect((await post('/api/undo', { changeset: 'nope' })).status).toBe(400);
-  });
-});
-
-describe('briefs', () => {
-  it('carry the run-until policy set when assigning', async () => {
-    const [agent, , task] = (
-      await core.ops(who(USER_ID, 'ui'), [
-        { op: 'create_node', ref: 'cc', kind: 'agent', title: 'Coder', attrs: { interactive: true } },
-        { op: 'create_edge', src: '$cc', kind: 'reports_to', dst: ANALYST_ID },
-        { op: 'create_node', ref: 't', kind: 'task', title: 'Add claims' },
-      ])
-    ).map((x) => x.id) as string[];
-    const client = await mcp();
-    const until = 'Through the ready subtasks, committing between tasks, until the branch is ready for a PR';
-    const { id } = await call<{ id: string }>(client, 'assign', { to: agent!, tasks: [task!], body: 'Add claims', until });
-    expect((await s.getEvent(db, id)).decisions.until).toEqual({ value: until, by: 'analyst' });
-    const { brief } = await call<{ brief: string }>(client, 'claim_assignment', { eventId: id });
-    expect(brief).toContain(`## Keep going until\n\n${until}`);
-    expect(brief).toContain("Don't stop to ask whether to continue");
-    await client.close();
-  });
-
-  it('say which tasks share a branch and ship in one PR', async () => {
-    const r = await core.ops(who(USER_ID, 'ui'), [
-      { op: 'create_node', ref: 'cc', kind: 'agent', title: 'Coder', attrs: { interactive: true } },
-      { op: 'create_edge', src: '$cc', kind: 'reports_to', dst: ANALYST_ID },
-      { op: 'create_node', ref: 'b', kind: 'resource', title: 'PDP first tag', attrs: { type: 'branch', repo: 'pdp', branch: 'feature/first-tag' } },
-      { op: 'create_node', ref: 'tag', kind: 'task', title: 'Cut the first PDP tag' },
-      { op: 'create_node', ref: 'a', kind: 'task', title: 'Add the parser' },
-      { op: 'create_node', ref: 'c', kind: 'task', title: 'Add the CLI' },
-      { op: 'create_node', ref: 'x', kind: 'task', title: 'Unrelated', status: 'dropped' },
-      { op: 'create_edge', src: '$tag', kind: 'uses', dst: '$b' },
-      { op: 'create_edge', src: '$tag', kind: 'needs', dst: '$a' },
-      { op: 'create_edge', src: '$tag', kind: 'needs', dst: '$c' },
-      { op: 'create_edge', src: '$tag', kind: 'needs', dst: '$x' },
-    ]);
-    const id = (ref: string) => r.find((x) => x.ref === ref)!.id;
-    const ev = await core.send(who(ANALYST_ID, 'mcp'), { kind: 'assign', recipient: id('cc'), body: 'Add the parser', tasks: [id('a')] });
-    const d = await (await ContextBuilder.load(db)).delivery(ev);
-    expect(d.branches).toMatchObject([{ name: 'PDP first tag', repo: 'pdp', branch: 'feature/first-tag' }]);
-    expect(d.branches![0]!.tasks.map((t) => t.title).sort()).toEqual(['Add the CLI', 'Add the parser', 'Cut the first PDP tag']);
-
-    const client = await mcp();
-    const { items } = await call<{ items: { eventId: string; branches?: unknown }[] }>(client, 'list_assignments', {});
-    expect(items.find((i) => i.eventId === ev.id)!.branches).toEqual([{ name: 'PDP first tag', repo: 'pdp', branch: 'feature/first-tag' }]);
-    const { brief } = await call<{ brief: string }>(client, 'claim_assignment', { eventId: ev.id });
-    expect(brief).toContain('## Branch: one PR for these tasks');
-    expect(brief).toContain('Branch `feature/first-tag` in pdp');
-    expect(brief).toContain('- Add the CLI (open)');
-    expect(brief).toContain('- PDP first tag [branch] feature/first-tag in pdp');
-    await client.close();
   });
 });

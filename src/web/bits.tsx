@@ -1,11 +1,11 @@
-import { Bot, CircleDot, FileText, ListTodo, User, Users } from 'lucide-react';
+import { CircleDot, FileText, ListTodo, User, Users } from 'lucide-react';
 import Markdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { NodeKind } from '../shared/model';
 import { useApp } from './App';
 
 export function KindIcon({ kind, size = 14 }: { kind: NodeKind; size?: number }) {
-  const I = { task: ListTodo, person: User, agent: Bot, team: Users, resource: FileText }[kind] ?? CircleDot;
+  const I = { task: ListTodo, person: User, team: Users, resource: FileText }[kind] ?? CircleDot;
   return <I size={size} aria-label={kind} className={`kind-${kind}`} />;
 }
 
