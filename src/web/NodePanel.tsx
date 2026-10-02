@@ -1,9 +1,10 @@
-import { Crosshair, Plus, Trash2, X } from 'lucide-react';
+import { Crosshair, Plus, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { ACTOR_KINDS, ANALYST_ID, EDGE_RULES, type Edge, type EdgeKind, Effort, type Event, type Node, type NodeKind, type Op, ResourceType, USER_ID } from '../shared/model';
 import { api, type NodeDetail } from './api';
 import { useApp } from './App';
 import { ago, KindIcon, Md, NodeChip } from './bits';
+import { DeleteNode } from './DeleteNode';
 import { NodePicker } from './NodePicker';
 
 /** Runs ops and returns an error message, or null. */
@@ -106,16 +107,7 @@ export function NodePanel({ id, onSelect, onClose }: { id: string; onSelect(id: 
         <button className={`btn small ${focus === id ? 'on' : ''}`} onClick={() => setFocus(focus === id ? null : id)}>
           <Crosshair size={14} /> {focus === id ? 'Focused' : 'Focus'}
         </button>
-        {!protectedNode && (
-          <button
-            className="btn small danger"
-            onClick={async () => {
-              if (confirm(`Delete "${n.title}" and its edges? (You can undo from the history.)`) && (await run([{ op: 'delete_node', id }]))) onSelect(null);
-            }}
-          >
-            <Trash2 size={14} /> Delete
-          </button>
-        )}
+        {!protectedNode && <DeleteNode detail={d} run={run} onDeleted={() => onSelect(null)} />}
       </div>
       {error && <p className="error">{error}</p>}
 

@@ -226,6 +226,23 @@ describe('undo', () => {
     await expect(core.undo(asUser(), w.changeset)).rejects.toThrow(/Nothing to undo/);
   });
 
+  it('deletes a resource still used by an open task, and undo brings back its uses edges', async () => {
+    const t = await ids([
+      { op: 'create_node', ref: 't', kind: 'task', title: 'Open task' },
+      { op: 'create_node', ref: 'r', kind: 'resource', title: 'Old repo', attrs: { type: 'repo' } },
+      { op: 'create_edge', src: '$t', kind: 'uses', dst: '$r' },
+    ]);
+    const w = asUser();
+    await core.ops(w, [{ op: 'delete_node', id: t.r! }]);
+    let g = await core.graph();
+    expect(g.nodes.find((n) => n.id === t.r)).toBeUndefined();
+    expect(g.edges.filter((e) => e.kind === 'uses')).toEqual([]);
+    await core.undo(asUser(), w.changeset);
+    g = await core.graph();
+    expect(g.nodes.find((n) => n.id === t.r)).toMatchObject({ kind: 'resource', title: 'Old repo' });
+    expect(g.edges.filter((e) => e.kind === 'uses')).toMatchObject([{ src: t.t, dst: t.r }]);
+  });
+
   it('refuses to undo over a newer edit', async () => {
     const t = await ids([{ op: 'create_node', ref: 'a', kind: 'task', title: 'A' }]);
     const w = asAnalyst();
