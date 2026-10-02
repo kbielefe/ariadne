@@ -139,7 +139,10 @@ Claude Code sessions ──MCP (/mcp)──► server     the Analyst, and inter
   completes it; `blocked`, `question`, and `progress` keep it open. Any report that closes an
   assignment ends its claim. For an item for you, the brief tells the session to ask or tell you,
   and your answer is the `submit_result` body. `still_working` resets the claim timer (re-claiming
-  an expired one). `release_assignment` puts it back. There is no model/effort dispatch: the session
+  an expired one); `waitingOnUser` makes it last `ARIADNE_CLAIM_WAIT_MINUTES` while the session waits
+  for your reply. Any other MCP call made for the item (`because` or `eventId`: `apply_ops`,
+  `get_context`, ...) is a heartbeat: it pushes the timer back (never shortens it) and re-claims an
+  item whose claim timed out. `release_assignment` puts it back (and a heartbeat doesn't re-claim it). There is no model/effort dispatch: the session
   already runs on whatever the person chose.
 - **Timers** (`timers` table): something Ariadne does at a time, with a `kind`, a `payload`, and an
   optional `key` (one live timer per key, so a timer can be reset or cancelled). A scheduler in the

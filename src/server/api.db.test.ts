@@ -201,6 +201,38 @@ describe('claims', () => {
     await client.close();
   });
 
+  it('any call made for a claimed item keeps the claim alive, and waiting on you lasts longer', async () => {
+    const note = await core.send(who(null, 'core'), { kind: 'report', recipient: ANALYST_ID, body: 'Plan the week' });
+    const client = await mcp();
+    await call(client, 'claim_assignment', { eventId: note.id });
+    const deadline = async () => new Date((await core.listTimers({ kind: 'claim_check' }))[0]!.at).getTime();
+    const mins = (m: number) => Date.now() + m * 60_000;
+
+    // A change made because of the item pushes the deadline back, like still_working.
+    await call(client, 'still_working', { eventId: note.id, minutes: 1 });
+    expect(await deadline()).toBeLessThan(mins(2));
+    await call(client, 'apply_ops', { ops: [{ op: 'create_node', kind: 'task', title: 'Plan' }], because: note.id });
+    expect(await deadline()).toBeGreaterThan(mins(25));
+
+    // Waiting on you: a much longer claim, which later calls don't shorten.
+    const { timesOutAt } = await call<{ timesOutAt: string }>(client, 'still_working', { eventId: note.id, waitingOnUser: true });
+    expect(new Date(timesOutAt).getTime()).toBeGreaterThan(mins(7 * 60));
+    await call(client, 'get_context', { eventId: note.id });
+    expect(await deadline()).toBe(new Date(timesOutAt).getTime());
+
+    // A session still on it after its claim ran out claims it again just by calling for it.
+    expect(await core.fireDue(new Date(mins(9 * 60)))).toBe(1);
+    expect((await s.getEvent(db, note.id)).delivery).toBe('pending');
+    await call(client, 'get_context', { eventId: note.id });
+    expect((await s.getEvent(db, note.id)).delivery).toBe('claimed');
+
+    // But not after it was given back on purpose.
+    await call(client, 'release_assignment', { eventId: note.id });
+    await call(client, 'get_context', { eventId: note.id });
+    expect((await s.getEvent(db, note.id)).delivery).toBe('pending');
+    await client.close();
+  });
+
   it('schedules events, cancels them, and sends the due ones', async () => {
     const client = await mcp();
     const keep = await call<{ id: string }>(client, 'schedule_event', { inMinutes: 10, event: { kind: 'report', to: USER_ID, body: 'Stand-up in 5' } });

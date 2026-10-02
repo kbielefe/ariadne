@@ -52,6 +52,8 @@ export interface CoreOptions {
   confidenceThreshold?: number;
   /** How long an interactive session may hold a claim without a word before Ariadne releases it. */
   claimTimeoutMinutes?: number;
+  /** How long a claim lasts once its session says it is waiting on the user (still_working waitingOnUser). */
+  claimWaitMinutes?: number;
 }
 
 /** A timer: something Ariadne does at a time. See TIMER_KINDS. */
@@ -98,6 +100,7 @@ export class Core {
   readonly decideTimeoutMs: number;
   readonly confidenceThreshold: number;
   readonly claimTimeoutMinutes: number;
+  readonly claimWaitMinutes: number;
 
   constructor(
     readonly db: Db,
@@ -107,6 +110,7 @@ export class Core {
     this.decideTimeoutMs = o.decideTimeoutMs ?? 5000;
     this.confidenceThreshold = o.confidenceThreshold ?? 0.6;
     this.claimTimeoutMinutes = o.claimTimeoutMinutes ?? 30;
+    this.claimWaitMinutes = o.claimWaitMinutes ?? 8 * 60;
   }
 
   // ============================================================== transactions
@@ -488,6 +492,30 @@ export class Core {
   /** "Still working": pushes the claim timer back. */
   async touchClaimTx(c: Ctx, eventId: string, minutes = this.claimTimeoutMinutes): Promise<Timer> {
     return this.scheduleTx(c, { kind: 'claim_check', key: claimKey(eventId), at: new Date(Date.now() + minutes * 60_000), payload: { eventId, minutes } });
+  }
+
+  /** Pushes the claim timer back to at least `minutes` from now; never shortens it (still_working may have asked for longer). */
+  async extendClaimTx(c: Ctx, eventId: string, minutes = this.claimTimeoutMinutes): Promise<void> {
+    const r = await c.tx.query(`SELECT at FROM timers WHERE key = $1 AND fired_at IS NULL AND cancelled_at IS NULL`, [claimKey(eventId)]);
+    if (r.rows[0] && new Date(r.rows[0].at).getTime() >= Date.now() + minutes * 60_000) return;
+    await this.touchClaimTx(c, eventId, minutes);
+  }
+
+  /**
+   * Any MCP call made for an event (`because` or `eventId`) is a sign of life: a claimed event's timer
+   * is pushed back, and one whose claim ran out (not released) is claimed again. Anything else: no-op.
+   */
+  async heartbeat(eventId: string): Promise<void> {
+    await this.run(who(null, 'core', eventId), async (c, after) => {
+      after.changed = false;
+      const ev = await s.findEvent(c.tx, eventId);
+      if (!ev || (ev.kind === 'assign' ? ev.state !== 'open' : ev.delivery === 'delivered')) return;
+      if (ev.delivery === 'claimed') return this.extendClaimTx(c, eventId);
+      if (ev.delivery !== 'pending') return;
+      // Its last claim timed out (rather than being released or never existing): the session is still on it.
+      const last = await c.tx.query(`SELECT fired_at, cancelled_at FROM timers WHERE key = $1 ORDER BY created_at DESC LIMIT 1`, [claimKey(eventId)]);
+      if (last.rows[0]?.fired_at && !last.rows[0].cancelled_at && (await this.claimTx(c, eventId))) after.changed = true;
+    });
   }
 
   /** Finishes (delivered) or releases (pending) a claim. */

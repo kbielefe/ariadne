@@ -77,6 +77,7 @@ export function userPrompt(d: Delivery, card: Card | null): string {
 
 ## When you have the answer
 
+Before you stop to wait for their reply, call still_working with eventId "${e.id}" and waitingOnUser: true, so the claim doesn't time out.
 Call submit_result with eventId "${e.id}" and the user's answer as body: status "done" when it's answered${card?.kind === 'proxy' ? '' : ' (start with the option they chose)'}, or "question"/"blocked" if they can't answer yet (it stays open). Don't act on the answer yourself here: it goes back to ${from} as the user's report.`;
 }
 
@@ -136,7 +137,8 @@ eventId "${e.id}" and a markdown body for ${e.from} that leads with the outcome.
 assignment; "blocked", "question", and "progress" keep it open. If Ariadne's graph should change (new tasks, a repo or
 build to attach, someone to coordinate with), add proposals: the same ops as apply_ops, for example
 [{"op": "create_node", "ref": "t1", "kind": "task", "title": "..."}, {"op": "create_edge", "src": "<task id>", "kind": "needs", "dst": "$t1"}].
-If you can't work on it here after all, call release_assignment so it goes back in the list.`,
+Calls with eventId "${e.id}" keep your claim alive; before you stop to wait for the user's reply, call still_working
+with waitingOnUser: true. If you can't work on it here after all, call release_assignment so it goes back in the list.`,
   );
 }
 

@@ -6,7 +6,8 @@
 //
 // Events for interactive agents wait as delivery = 'pending' (the relay skips these agents).
 // claim_assignment claims one ('claimed') and starts a claim timer; submit_result done completes it
-// ('delivered'); release_assignment, or the timer running out, puts it back ('pending').
+// ('delivered'); release_assignment, or the timer running out, puts it back ('pending'). Any MCP call made
+// for the item (because / eventId) pushes the timer back (core.heartbeat, called from mcp.ts).
 // Ariadne doesn't track who claimed: any session may report on any item (MCP is asynchronous).
 import { z } from 'zod';
 import { ANALYST_SYSTEM, analystPrompt, interactivePrompt, userPrompt } from '../runner/prompts';
@@ -20,7 +21,8 @@ import { who } from './store';
 export const WORK_INSTRUCTIONS = `Interactive sessions: when the user asks you to handle the next Ariadne assignment, call
 list_assignments and pick the FIRST item you have the capability to handle here (the repo it needs, access, tools,
 knowledge). claim_assignment it; if the claim fails, take the next one. Follow the brief it returns, then
-submit_result. On long work, call still_working before the claim times out.`;
+submit_result. Any call that passes the item's id (as because or eventId) keeps your claim alive; on long quiet work,
+call still_working. Before you stop to wait for the user's reply, call still_working with waitingOnUser: true.`;
 
 /** Items waiting for an interactive session: pending, not finished, for you or an unpaused interactive agent. */
 const AVAILABLE = `e.delivery = 'pending' AND (e.kind = 'report' OR e.state = 'open') AND (n.id = $1 OR (n.kind = 'agent'
@@ -35,7 +37,7 @@ async function unfinished(q: s.Q, eventId: string): Promise<Event> {
 }
 
 const finish = (ev: Event) =>
-  `\n\n## When you're done\n\nCall submit_result with eventId "${ev.id}" and status "done"${ev.kind === 'assign' ? ' and a body that leads with the outcome' : ''}. Your claim times out after a while without a word: on long work call still_working.`;
+  `\n\n## When you're done\n\nCall submit_result with eventId "${ev.id}" and status "done"${ev.kind === 'assign' ? ' and a body that leads with the outcome' : ''}. Pass "because": "${ev.id}" on your changes; that also keeps your claim alive. Before you stop to wait for the user's reply, call still_working with waitingOnUser: true.`;
 
 export const WORK_TOOLS: Tool[] = [
   {
@@ -121,7 +123,7 @@ export const WORK_TOOLS: Tool[] = [
         if (done) {
           await c.tx.query(`UPDATE events SET delivery = 'delivered', delivered_at = coalesce(delivered_at, now()) WHERE id = $1`, [ev.id]);
           await core.cancelTimerTx(c, claimKey(ev.id));
-        } else if ((await s.getEvent(c.tx, ev.id)).delivery === 'claimed') await core.touchClaimTx(c, ev.id);
+        } else if ((await s.getEvent(c.tx, ev.id)).delivery === 'claimed') await core.extendClaimTx(c, ev.id);
         return { reportId, completed: done };
       });
       if (done) core.hub.clearStatus(me);
@@ -130,16 +132,20 @@ export const WORK_TOOLS: Tool[] = [
   },
   {
     name: 'still_working',
-    description: 'Still on it: resets the claim timeout (re-claims it if the claim already expired). Optionally say how many minutes you need.',
-    input: z.object({ eventId: z.uuid(), minutes: z.number().int().min(1).max(24 * 60).optional() }),
-    run: async (core, a: { eventId: string; minutes?: number }) =>
-      core.run(who(null, 'core', a.eventId), async (c) => {
+    description:
+      "Still on it: resets the claim timeout (re-claims it if the claim already expired). Optionally say how many minutes you need. waitingOnUser: you're about to stop and wait for the user's reply in this session; the claim then lasts much longer (unless you give minutes).",
+    input: z.object({ eventId: z.uuid(), minutes: z.number().int().min(1).max(24 * 60).optional(), waitingOnUser: z.boolean().optional() }),
+    run: async (core, a: { eventId: string; minutes?: number; waitingOnUser?: boolean }) => {
+      const { ev, at } = await core.run(who(null, 'core', a.eventId), async (c) => {
         const ev = await unfinished(c.tx, a.eventId);
         if (ev.delivery === 'pending') await core.claimTx(c, ev.id);
         else if (ev.delivery !== 'claimed') throw new s.Invalid('That item is not handled over MCP');
-        const t = await core.touchClaimTx(c, ev.id, a.minutes);
-        return { timesOutAt: t.at };
-      }),
+        const t = await core.touchClaimTx(c, ev.id, a.minutes ?? (a.waitingOnUser ? core.claimWaitMinutes : undefined));
+        return { ev, at: t.at };
+      });
+      if (ev.recipient && ev.recipient !== USER_ID) core.hub.status({ actor: ev.recipient, text: a.waitingOnUser ? 'Waiting on you in Claude Code…' : 'Working in Claude Code…', eventId: ev.id });
+      return { timesOutAt: at };
+    },
   },
   {
     name: 'release_assignment',

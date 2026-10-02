@@ -251,7 +251,12 @@ export function createMcpServer(core: Core): Server {
     if (!parsed.success) return fail(`Invalid arguments: ${z.prettifyError(parsed.error)}`);
     const args = parsed.data as Record<string, unknown>;
     try {
-      return ok(await tool.run(core, args as never, (args.because as string | undefined) ?? null));
+      const result = await tool.run(core, args as never, (args.because as string | undefined) ?? null);
+      // A call made for an event keeps its claim alive (core.heartbeat), so a session busy on it isn't timed out.
+      // The claim tools (workmcp.ts) set the claim timer themselves.
+      const forEvent = (args.because ?? args.eventId) as string | undefined;
+      if (forEvent && !WORK_TOOLS.includes(tool)) await core.heartbeat(forEvent).catch((err) => console.error('heartbeat.failed', forEvent, err));
+      return ok(result);
     } catch (err) {
       if (err instanceof z.ZodError) return fail(`Invalid: ${z.prettifyError(err)}`);
       return fail(err instanceof Error ? err.message : String(err));
