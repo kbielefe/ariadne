@@ -3,11 +3,12 @@ import dagre from 'cytoscape-dagre';
 import { ArrowDownUp, Crosshair, Expand, Maximize, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Plus } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { type Direction, readiness, reachable } from '../shared/graph';
-import { EDGE_RULES, type Edge, type EdgeKind, EdgeKind as EdgeKinds, type Node, type NodeKind, USER_ID } from '../shared/model';
+import { EDGE_RULES, type EdgeKind, EdgeKind as EdgeKinds, type NodeKind, USER_ID } from '../shared/model';
 import { remember } from './api';
 import { useApp } from './App';
 import { KindIcon } from './bits';
 import { NewNodeForm, NodePanel } from './NodePanel';
+import { DEFAULT_SORT, isSort, layoutOptions, orderLeafSiblings, rankDir, SORTS, type Sort, sortNodes } from './order';
 
 cytoscape.use(dagre);
 
@@ -24,36 +25,9 @@ interface Filters {
 
 const DEFAULT_FILTERS: Filters = { kinds: NODE_KINDS, edges: [...EdgeKinds.options], showClosed: false, showAssigned: true, direction: 'down', depth: 0 };
 
-/** How the node list in the left sidebar is ordered. */
-const SORTS = {
-  status: 'Ready first',
-  updated: 'Recently updated',
-  created: 'Recently created',
-  title: 'Title (A–Z)',
-} as const;
-type Sort = keyof typeof SORTS;
-
 function loadSort(): Sort {
   const s = remember.get('graphSort');
-  return s && s in SORTS ? (s as Sort) : 'status';
-}
-
-/** Ready tasks, then waiting, then other kinds, then done and dropped. */
-function rank(n: Node, edges: readonly Edge[], byId: ReadonlyMap<string, Node>): number {
-  if (n.kind !== 'task') return 2;
-  if (n.status === 'open') return readiness(n, edges, byId).ready ? 0 : 1;
-  return 3;
-}
-
-function sortNodes(nodes: Node[], sort: Sort, edges: readonly Edge[], byId: ReadonlyMap<string, Node>): Node[] {
-  const byTitle = (a: Node, b: Node) => a.title.localeCompare(b.title);
-  const cmp: Record<Sort, (a: Node, b: Node) => number> = {
-    title: byTitle,
-    updated: (a, b) => b.updatedAt.localeCompare(a.updatedAt) || byTitle(a, b),
-    created: (a, b) => b.createdAt.localeCompare(a.createdAt) || byTitle(a, b),
-    status: (a, b) => rank(a, edges, byId) - rank(b, edges, byId) || byTitle(a, b),
-  };
-  return [...nodes].sort(cmp[sort]);
+  return isSort(s) ? s : DEFAULT_SORT;
 }
 
 function loadFilters(): Filters {
@@ -110,7 +84,9 @@ export function GraphView({ selected, onSelect }: { selected: string | null; onS
       if (f.showAssigned) for (const a of graph.assignments) if (a.recipient !== USER_ID && a.tasks.some((t) => ids.has(t)) && f.kinds.includes(byId.get(a.recipient)?.kind ?? 'task')) ids.add(a.recipient);
     }
     const els: ElementDefinition[] = [];
-    for (const id of ids) {
+    // Elements carry their place in the sort; the layout lays siblings out in that order.
+    const order = new Map(sortNodes([...ids].map((id) => byId.get(id)!), sort, graph.edges, byId).map((n, i) => [n.id, i]));
+    for (const id of order.keys()) {
       const n = byId.get(id)!;
       const classes: string[] = [n.kind];
       if (n.kind === 'task') {
@@ -120,22 +96,17 @@ export function GraphView({ selected, onSelect }: { selected: string | null; onS
       }
       if (n.attrs.paused) classes.push('paused');
       if (id === focus) classes.push('focus');
-      els.push({ group: 'nodes', data: { id, label: n.title.length > 64 ? `${n.title.slice(0, 63)}…` : n.title, title: n.title }, classes: classes.join(' ') });
+      els.push({ group: 'nodes', data: { id, label: n.title.length > 64 ? `${n.title.slice(0, 63)}…` : n.title, title: n.title, order: order.get(id) }, classes: classes.join(' ') });
     }
-    for (const e of edges) if (ids.has(e.src) && ids.has(e.dst)) els.push({ group: 'edges', data: { id: e.id, source: e.src, target: e.dst, label: e.kind === 'needs' ? '' : EDGE_RULES[e.kind].label }, classes: e.kind });
+    for (const e of edges) if (ids.has(e.src) && ids.has(e.dst)) els.push({ group: 'edges', data: { id: e.id, source: e.src, target: e.dst, label: e.kind === 'needs' ? '' : EDGE_RULES[e.kind].label, order: order.get(e.dst) }, classes: e.kind });
     if (f.showAssigned)
       for (const a of graph.assignments.filter((x) => x.recipient !== USER_ID)) // items for you are handled in Claude Code
         for (const t of a.tasks)
-          if (ids.has(t) && ids.has(a.recipient)) els.push({ group: 'edges', data: { id: `as:${a.eventId}:${t}`, source: t, target: a.recipient, label: 'assigned' }, classes: 'assigned' });
+          if (ids.has(t) && ids.has(a.recipient)) els.push({ group: 'edges', data: { id: `as:${a.eventId}:${t}`, source: t, target: a.recipient, label: 'assigned', order: order.get(a.recipient) }, classes: 'assigned' });
     return els;
-  }, [graph, byId, f, focus]);
+  }, [graph, byId, f, focus, sort]);
 
   const counts = useMemo(() => ({ shown: elements.filter((e) => e.group === 'nodes').length, total: graph.nodes.length }), [elements, graph]);
-  // The nodes on the canvas, as a list.
-  const listed = useMemo(() => {
-    const shown = elements.filter((e) => e.group === 'nodes').map((e) => byId.get(e.data.id!)!);
-    return sortNodes(shown, sort, graph.edges, byId);
-  }, [elements, sort, graph, byId]);
 
   return (
     <div className={`graph-view ${dragging ? 'dragging' : ''}`} style={{ gridTemplateColumns: `${panes.filters ? `${panes.filtersW}px` : '0px'} 1fr ${panes.details ? `${panes.detailsW}px` : '0px'}` }}>
@@ -181,33 +152,24 @@ export function GraphView({ selected, onSelect }: { selected: string | null; onS
             ))}
           </select>
         </fieldset>
-        <p className="muted small">
-          {counts.shown} of {counts.total} shown. Click to select, double-click to focus.
-        </p>
         <fieldset>
           <legend>
-            <ArrowDownUp size={12} /> Shown
+            <ArrowDownUp size={12} /> Order
           </legend>
-          <select value={sort} onChange={(e) => setSort(e.target.value as Sort)} aria-label="Sort the list">
+          <select value={sort} onChange={(e) => setSort(e.target.value as Sort)} aria-label="Order of nodes side by side">
             {Object.entries(SORTS).map(([k, label]) => (
               <option key={k} value={k}>
                 {label}
               </option>
             ))}
           </select>
-          <ul className="node-list">
-            {listed.map((n) => (
-              <li key={n.id}>
-                <button className={`node-row ${n.id === selected ? 'on' : ''} ${n.kind === 'task' && n.status !== 'open' ? 'closed' : ''}`} aria-current={n.id === selected || undefined} title={n.title} onClick={() => onSelect(n.id)} onDoubleClick={() => setFocus(n.id)}>
-                  <KindIcon kind={n.kind} /> <span>{n.title}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
         </fieldset>
+        <p className="muted small">
+          {counts.shown} of {counts.total} shown. Click to select, double-click to focus.
+        </p>
       </aside>
       <div className="canvas-wrap">
-        <Canvas elements={elements} selected={selected} onSelect={onSelect} onFocus={setFocus} />
+        <Canvas elements={elements} sort={sort} selected={selected} onSelect={onSelect} onFocus={setFocus} />
         <div className="canvas-tools">
           <button className="btn icon-btn" aria-label={panes.filters ? 'Hide filters' : 'Show filters'} aria-pressed={panes.filters} title={panes.filters ? 'Hide filters' : 'Show filters'} onClick={() => setPane({ filters: !panes.filters })}>
             {panes.filters ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}
@@ -378,7 +340,7 @@ function styles(): cytoscape.StylesheetJson {
   ];
 }
 
-function Canvas({ elements, selected, onSelect, onFocus }: { elements: ElementDefinition[]; selected: string | null; onSelect(id: string | null): void; onFocus(id: string): void }) {
+function Canvas({ elements, sort, selected, onSelect, onFocus }: { elements: ElementDefinition[]; sort: Sort; selected: string | null; onSelect(id: string | null): void; onFocus(id: string): void }) {
   const box = useRef<HTMLDivElement>(null);
   const cy = useRef<Cy | null>(null);
   const handlers = useRef({ onSelect, onFocus });
@@ -421,13 +383,15 @@ function Canvas({ elements, selected, onSelect, onFocus }: { elements: ElementDe
         } else c.add(e);
       }
     });
-    const key = elements.map((e) => e.data.id).sort().join(',');
+    // Changing the sort lays out again; edits that only move a node in the sort don't.
+    const key = `${sort}|${elements.map((e) => e.data.id).sort().join(',')}`;
     if (key !== shape.current) {
       shape.current = key;
-      // Wide graphs read better left to right: a fan of many children becomes a tall column.
-      const layout = c.layout({ name: 'dagre', rankDir: elements.filter((e) => e.group === 'nodes').length > 10 ? 'LR' : 'TB', nodeSep: 14, rankSep: 90, animate: false, fit: true, padding: 30 } as cytoscape.LayoutOptions);
-      // A handful of nodes shouldn't fill the screen.
+      const n = c.nodes().length;
+      const layout = c.layout(layoutOptions(n));
       layout.one('layoutstop', () => {
+        orderLeafSiblings(c.nodes(), rankDir(n));
+        // A handful of nodes shouldn't fill the screen.
         if (c.zoom() > 1.1) {
           c.zoom(1.1);
           c.center();
@@ -435,7 +399,7 @@ function Canvas({ elements, selected, onSelect, onFocus }: { elements: ElementDe
       });
       layout.run();
     }
-  }, [elements]);
+  }, [elements, sort]);
 
   useEffect(() => {
     const c = cy.current!;
