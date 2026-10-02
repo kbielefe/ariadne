@@ -269,7 +269,11 @@ export class Core {
       tasks,
     });
     if (ev.delivery === 'pending') after.deliver = true;
-    if (original && ev.closes) await s.patchEvent(c, original.id, { state: 'closed' });
+    if (original && ev.closes) {
+      await s.patchEvent(c, original.id, { state: 'closed' });
+      // However it closed (reply, submit_result, a bus report), a claim on it is over.
+      await this.endClaimTx(c, original.id, 'delivered');
+    }
     if (original && senderNode?.attrs.decider) after.answered.push(original.id);
     // A proxy card answered: the proxied person or team reports back to whoever assigned them.
     if (original?.card?.kind === 'proxy' && original.replyTo) {
@@ -567,10 +571,12 @@ export class Core {
 
   // ============================================================== claims (interactive sessions)
 
-  /** Claims an event for an interactive session and starts its claim timer. */
-  async claimTx(c: Ctx, eventId: string): Promise<void> {
-    await c.tx.query(`UPDATE events SET delivery = 'claimed', delivered_at = now() WHERE id = $1`, [eventId]);
+  /** Claims a pending event for an interactive session and starts its claim timer. False if it wasn't pending. */
+  async claimTx(c: Ctx, eventId: string): Promise<boolean> {
+    const r = await c.tx.query(`UPDATE events SET delivery = 'claimed', delivered_at = now() WHERE id = $1 AND delivery = 'pending'`, [eventId]);
+    if (!r.rowCount) return false;
     await this.touchClaimTx(c, eventId);
+    return true;
   }
 
   /** "Still working": pushes the claim timer back. */

@@ -120,21 +120,23 @@ Claude Code sessions ──MCP (/mcp)──► server     the Analyst, and inter
 - **Deliveries are self-contained** (server/context.ts): the event, the recipient's briefs, the
   tasks with inherited context, the recent thread, the supervisor, and subordinates. Headless agents never
   call back.
-- **Your messages jump the queue:** they have priority 9 on RabbitMQ, and `next_assignment` hands
-  them out first.
+- **Your messages jump the queue:** they have priority 9 on RabbitMQ, and `list_assignments` lists
+  them first.
 - **Status lines:** runners publish `status` to the inbox, and the Analyst can call `set_status`.
   Browsers see them live over SSE.
 - **System One:** Ariadne asks deciders before delivering (chat triage: intent + what it's about;
   dispatch: one difficulty score → model + effort). No decider, a timeout, or low confidence →
   defaults. Ariadne never calls a model itself.
 - **Claims** (interactive agents; the relay skips them). One `/mcp`, with no token yet (agent-specific
-  permissions come later; it is localhost only). `next_assignment(repo)` claims the next event, your
-  messages first. If one is about the session's repo (inherited `uses`), it gets that; if not, it
-  gets one that isn't about any repo. It returns a markdown brief. `submit_result` finishes it
-  (`done`) or keeps it (`blocked`, `question`, `progress`). For an assignment it reports with an
-  optional `proposals` list, checked as ops. `still_working` resets the claim timer.
-  `release_assignment` puts it back. There is no model/effort dispatch: the session already runs on
-  whatever the person chose.
+  permissions come later; it is localhost only). `list_assignments` shows what's waiting (your
+  messages first), with the repos each item's tasks use. The session picks the first one it can
+  handle and calls `claim_assignment`, which is atomic and returns the brief. Ariadne doesn't record
+  who claimed. `submit_result` works in any claim state, since MCP is asynchronous and the result
+  may come from another session; it fails only if the item is missing or already completed. `done`
+  completes it; `blocked`, `question`, and `progress` keep it open. Any report that closes an
+  assignment (including `reply`) ends its claim. `still_working` resets the claim timer (re-claiming
+  an expired one). `release_assignment` puts it back. There is no model/effort dispatch: the session
+  already runs on whatever the person chose.
 - **Timers** (`timers` table): something Ariadne does at a time, with a `kind`, a `payload`, and an
   optional `key` (one live timer per key, so a timer can be reset or cancelled). A scheduler in the
   server fires due ones every 15s, RabbitMQ or not. Kinds:

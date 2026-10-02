@@ -53,7 +53,7 @@ export const AgentAttrs = z
     effort: Effort.describe('Default effort level'),
     decider: z.boolean().describe('A System One decider: answers choice/score/noul questions, writes no text'),
     paused: z.boolean().describe('Paused agents get no deliveries; they wait'),
-    interactive: z.boolean().describe('Works in an interactive Claude Code session: claims its events over MCP (next_assignment) instead of RabbitMQ'),
+    interactive: z.boolean().describe('Works in an interactive Claude Code session: claims its events over MCP (claim_assignment) instead of RabbitMQ'),
   })
   .partial();
 

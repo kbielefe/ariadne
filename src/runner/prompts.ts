@@ -1,4 +1,4 @@
-// Prompts built from a delivery: for headless runners, and the briefs next_assignment returns. Pure functions, so they're easy to test and tune.
+// Prompts built from a delivery: for headless runners, and the briefs claim_assignment returns. Pure functions, so they're easy to test and tune.
 import type { Delivery, TaskContext } from '../server/context';
 
 export const ANALYST_SYSTEM = `You are the Analyst inside Ariadne, the user's trusted external memory. The user has
@@ -118,7 +118,7 @@ eventId "${e.id}" and a markdown body for ${e.from} that leads with the outcome.
 assignment; "blocked", "question", and "progress" keep it open. If Ariadne's graph should change (new tasks, a repo or
 build to attach, someone to coordinate with), add proposals: the same ops as apply_ops, for example
 [{"op": "create_node", "ref": "t1", "kind": "task", "title": "..."}, {"op": "create_edge", "src": "<task id>", "kind": "needs", "dst": "$t1"}].
-If you can't work on it here after all, call release_assignment so it goes back in the queue.`,
+If you can't work on it here after all, call release_assignment so it goes back in the list.`,
   );
 }
 

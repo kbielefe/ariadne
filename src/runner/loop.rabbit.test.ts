@@ -78,7 +78,7 @@ it('delivers an assignment to an agent runner and records its report', async () 
   expect(report).toMatchObject({ sender: coder, recipient: ANALYST_ID, body: 'Done: openid-client.', proposals: [{ title: 'Write ADR' }], delivery: expect.stringMatching(/pending|delivered/) });
 });
 
-it('leaves events for interactive agents (the Analyst) for next_assignment, not RabbitMQ', async () => {
+it('leaves events for interactive agents (the Analyst) for claim_assignment, not RabbitMQ', async () => {
   const conn = await amqp.connect(URL);
   const ch = await conn.createChannel();
   await ch.deleteQueue(actorQueue(ANALYST_ID)).catch(() => {});

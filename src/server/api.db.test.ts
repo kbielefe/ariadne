@@ -91,7 +91,7 @@ describe('claims', () => {
     return r.structuredContent as T;
   };
 
-  it('hands out the repo item first, then generic ones, and takes valid results', async () => {
+  it('lists what is waiting, claims each item once, and takes results whatever the claim state', async () => {
     const [agent, , , sub, loose] = (
       await core.ops(who(USER_ID, 'ui'), [
         { op: 'create_node', ref: 'cc', kind: 'agent', title: 'Coder', attrs: { interactive: true } },
@@ -106,42 +106,62 @@ describe('claims', () => {
     )
       .filter((x) => x.ref)
       .map((x) => x.id) as string[];
-    const generic = await core.send(who(ANALYST_ID, 'mcp'), { kind: 'assign', recipient: agent!, body: 'Draft the memo', tasks: [loose!] });
-    const forRepo = await core.send(who(ANALYST_ID, 'mcp'), { kind: 'assign', recipient: agent!, body: 'Add claims', tasks: [sub!] });
-    expect(forRepo.delivery).toBe('pending');
+    const memo = await core.send(who(ANALYST_ID, 'mcp'), { kind: 'assign', recipient: agent!, body: 'Draft the memo', tasks: [loose!] });
+    const code = await core.send(who(ANALYST_ID, 'mcp'), { kind: 'assign', recipient: agent!, body: 'Add claims', tasks: [sub!] });
+    const chat = await core.chat('What is next?');
 
     const client = await mcp();
-    expect((await client.callTool({ name: 'next_assignment', arguments: {} })).isError).toBe(true); // repo is required
-    const got = await call<{ assignment: { eventId: string; repo: string }; brief: string }>(client, 'next_assignment', { repo: 'git@github.com:kb/ariadne.git' });
-    expect(got.assignment).toMatchObject({ eventId: forRepo.id, repo: 'ariadne' });
+    type Item = { eventId: string; as: string; repos: { name: string; url?: string }[]; tasks: { title: string }[] };
+    const list = async () => (await call<{ items: Item[] }>(client, 'list_assignments', {})).items;
+    // Your chat first, then oldest; each with the repos its tasks use (inherited).
+    const items = await list();
+    expect(items.map((i) => i.eventId)).toEqual([chat.id, memo.id, code.id]);
+    expect(items[0]!.as).toBe('Analyst');
+    expect(items[2]).toMatchObject({ as: 'Coder', tasks: [{ title: 'Add claims' }], repos: [{ name: 'ariadne', url: 'https://github.com/kb/ariadne' }] });
+    expect(items[1]!.repos).toEqual([]);
+
+    // A claim is exclusive and takes the item off the list.
+    const got = await call<{ brief: string }>(client, 'claim_assignment', { eventId: code.id });
     expect(got.brief).toContain('submit_result');
-    expect(await call(client, 'next_assignment', { repo: 'git@github.com:kb/other.git' })).toMatchObject({ assignment: { eventId: generic.id, repo: null } });
-    expect(await call(client, 'next_assignment', { repo: 'git@github.com:kb/ariadne.git' })).toMatchObject({ assignment: null });
+    expect((await client.callTool({ name: 'claim_assignment', arguments: { eventId: code.id } })).isError).toBe(true);
+    expect((await list()).map((i) => i.eventId)).toEqual([chat.id, memo.id]);
+    expect(await core.listTimers({ kind: 'claim_check' })).toHaveLength(1);
 
-    // Released work goes back in the queue.
-    await call(client, 'release_assignment', { eventId: generic.id });
-    expect(await call(client, 'next_assignment', { repo: '/tmp/x' })).toMatchObject({ assignment: { eventId: generic.id } });
+    // Released work goes back on the list.
+    await call(client, 'claim_assignment', { eventId: memo.id });
+    await call(client, 'release_assignment', { eventId: memo.id });
+    expect((await list()).map((i) => i.eventId)).toContain(memo.id);
 
-    // Invalid results are refused; a valid one closes the assignment and reaches the Analyst with its proposals.
-    expect((await client.callTool({ name: 'submit_result', arguments: { eventId: forRepo.id, status: 'done', body: 'x', proposals: [{ op: 'explode' }] } })).isError).toBe(true);
-    expect((await client.callTool({ name: 'submit_result', arguments: { eventId: forRepo.id, status: 'done' } })).isError).toBe(true);
-    await call(client, 'submit_result', { eventId: forRepo.id, status: 'done', body: 'Added claims.', proposals: [{ op: 'create_node', kind: 'task', title: 'Document it' }] });
-    const after = await s.getEvent(db, forRepo.id);
-    expect(after).toMatchObject({ state: 'closed', delivery: 'delivered' });
+    // Results: invalid ones are refused; a valid one closes the assignment and reaches the Analyst with its proposals.
+    expect((await client.callTool({ name: 'submit_result', arguments: { eventId: code.id, status: 'done', body: 'x', proposals: [{ op: 'explode' }] } })).isError).toBe(true);
+    expect((await client.callTool({ name: 'submit_result', arguments: { eventId: code.id, status: 'done' } })).isError).toBe(true);
+    await call(client, 'submit_result', { eventId: code.id, status: 'done', body: 'Added claims.', proposals: [{ op: 'create_node', kind: 'task', title: 'Document it' }] });
+    expect(await s.getEvent(db, code.id)).toMatchObject({ state: 'closed', delivery: 'delivered' });
     const [report] = await s.listEvents(db, { kind: 'report', actor: agent! });
-    expect(report).toMatchObject({ sender: agent, recipient: ANALYST_ID, replyTo: forRepo.id, body: 'Added claims.', proposals: [{ title: 'Document it' }] });
-    // The report waits for the Analyst, who is interactive too.
-    expect(report!.delivery).toBe('pending');
-    expect((await client.callTool({ name: 'submit_result', arguments: { eventId: forRepo.id, status: 'done', body: 'again' } })).isError).toBe(true);
-    expect(await core.listTimers({ kind: 'claim_check' })).toHaveLength(1); // only the memo's claim is live
+    expect(report).toMatchObject({ sender: agent, recipient: ANALYST_ID, replyTo: code.id, body: 'Added claims.', proposals: [{ title: 'Document it' }], delivery: 'pending' });
+    expect(await core.listTimers({ kind: 'claim_check' })).toEqual([]);
+    // Completed or unknown: errors.
+    expect((await client.callTool({ name: 'submit_result', arguments: { eventId: code.id, status: 'done', body: 'again' } })).isError).toBe(true);
+    expect((await client.callTool({ name: 'submit_result', arguments: { eventId: '99999999-9999-4999-8999-999999999999', status: 'done', body: 'x' } })).isError).toBe(true);
+
+    // A result for an item no one claimed (another session, or a lost claim) still counts.
+    await call(client, 'submit_result', { eventId: memo.id, status: 'progress', body: 'Outline done.' });
+    expect(await s.getEvent(db, memo.id)).toMatchObject({ state: 'open', delivery: 'pending' });
+    await call(client, 'submit_result', { eventId: memo.id, status: 'done', body: 'Memo drafted.' });
+    expect(await s.getEvent(db, memo.id)).toMatchObject({ state: 'closed', delivery: 'delivered' });
+
+    // The Analyst handles the agent's report: done marks it handled, and it leaves the list.
+    await call(client, 'claim_assignment', { eventId: report!.id });
+    await call(client, 'submit_result', { eventId: report!.id, status: 'done' });
+    expect((await s.getEvent(db, report!.id)).delivery).toBe('delivered');
+    expect((await list()).map((i) => i.eventId)).not.toContain(report!.id);
     await client.close();
   });
 
-  it("lets the Analyst session handle your chat, and releases a stuck claim and tells you", async () => {
+  it('releases a stuck claim and tells you; still_working and reply keep the claim honest', async () => {
     const chat = await core.chat('What is next?');
     const client = await mcp();
-    const got = await call<{ assignment: { eventId: string; as: string }; brief: string }>(client, 'next_assignment', { repo: 'https://github.com/kb/anything' });
-    expect(got.assignment).toMatchObject({ eventId: chat.id, as: 'Analyst' });
+    const got = await call<{ brief: string }>(client, 'claim_assignment', { eventId: chat.id });
     expect(got.brief).toContain('You are the Analyst');
     expect((await s.getEvent(db, chat.id)).delivery).toBe('claimed');
 
@@ -154,13 +174,15 @@ describe('claims', () => {
     const fyi = (await s.listEvents(db, { kind: 'report', actor: USER_ID })).find((e) => e.sender === null);
     expect(fyi?.body).toMatch(/Released a stuck claim/);
 
-    // Claimed again: the Analyst answers with reply, then finishes the claim without a body.
-    await call(client, 'next_assignment', { repo: 'x' });
+    // A session still on it after the claim expired re-claims it with still_working.
+    await call(client, 'still_working', { eventId: chat.id });
+    expect((await s.getEvent(db, chat.id)).delivery).toBe('claimed');
+
+    // A reply that closes the chat completes it and ends the claim; submit_result then says it's completed.
     await call(client, 'reply', { replyTo: chat.id, body: 'The memo.' });
-    expect((await client.callTool({ name: 'submit_result', arguments: { eventId: chat.id, status: 'done', proposals: [{ op: 'create_node', kind: 'task', title: 'x' }] } })).isError).toBe(true);
-    await call(client, 'submit_result', { eventId: chat.id, status: 'done' });
     expect(await s.getEvent(db, chat.id)).toMatchObject({ state: 'closed', delivery: 'delivered' });
     expect(await core.listTimers()).toEqual([]);
+    expect((await client.callTool({ name: 'submit_result', arguments: { eventId: chat.id, status: 'done', body: 'x' } })).isError).toBe(true);
     await client.close();
   });
 

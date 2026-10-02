@@ -27,12 +27,13 @@ delegates to agents, and brings you only what needs you, as cards. The design an
    claude mcp add --scope user --transport http ariadne http://127.0.0.1:3100/mcp
    ```
 
-   In any repo, say *"Handle the next ariadne assignment."* Claude calls `next_assignment` with the
-   repo's git remote URL. Ariadne hands back something about that repo (its tasks `use` it) if there is
-   one, or else something that isn't about any repo: your chats, card answers, and agent reports for
-   the Analyst, plus assignments for agents marked **interactive (Claude Code)**. Claude does the work
-   and calls `submit_result`. A claim with no word for `ARIADNE_CLAIM_TIMEOUT_MINUTES` (default 30)
-   goes back in the queue and you're told; `still_working` resets the clock.
+   In any repo, say *"Handle the next ariadne assignment."* Claude calls `list_assignments` (your
+   chats, card answers, and agent reports for the Analyst, plus assignments for agents marked
+   **interactive (Claude Code)**; each shows the repos its tasks use). It claims the first one it can
+   handle there with `claim_assignment`, does the work, and calls `submit_result`. A claim with no word
+   for `ARIADNE_CLAIM_TIMEOUT_MINUTES` (default 30) goes back on the list and you're told;
+   `still_working` resets the clock. Ariadne doesn't track which session claimed what: any session
+   can submit a result.
 
 4. Optional: headless agents over RabbitMQ. Create the agent in the Graph view and make it report to
    the Analyst. Then run:
