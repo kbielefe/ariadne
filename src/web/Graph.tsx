@@ -1,6 +1,6 @@
 import cytoscape, { type Core as Cy, type ElementDefinition } from 'cytoscape';
 import dagre from 'cytoscape-dagre';
-import { Crosshair, Maximize, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Plus } from 'lucide-react';
+import { Crosshair, Expand, Maximize, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Plus } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { type Direction, readiness, reachable } from '../shared/graph';
 import { EDGE_RULES, type EdgeKind, EdgeKind as EdgeKinds, type NodeKind, USER_ID } from '../shared/model';
@@ -159,6 +159,11 @@ export function GraphView({ selected, onSelect }: { selected: string | null; onS
           >
             <Plus size={16} /> New
           </button>
+          {focus && (
+            <button className="btn on" title="Clear the focus and show the whole graph" onClick={() => setFocus(null)}>
+              <Expand size={16} /> Show all
+            </button>
+          )}
         </div>
         {panes.filters && <ResizeHandle side="left" label="Resize filters" width={panes.filtersW} min={160} max={420} fallback={DEFAULT_PANES.filtersW} onChange={(filtersW) => setPane({ filtersW })} onDrag={setDragging} />}
         {panes.details && <ResizeHandle side="right" label="Resize details" width={panes.detailsW} min={280} max={900} fallback={DEFAULT_PANES.detailsW} onChange={(detailsW) => setPane({ detailsW })} onDrag={setDragging} />}
