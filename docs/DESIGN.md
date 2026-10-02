@@ -46,7 +46,9 @@ RabbitMQ to decouple agents from the core.
 | `member_of` | person/agent → team | |
 
 **Computed, not stored:** whether a task is ready (open, and everything it needs is closed), who it's
-assigned to (open assignments), and whether it's a root.
+assigned to (open assignments), and whether it's a root. When tasks close, Ariadne says which tasks
+that just made ready (`nowReady` in the `apply_ops` and `submit_result` answers, and a "Now ready"
+list at the end of a done report on an assignment), so the next step is never silent.
 
 **Inheritance:** a task's context includes the guidance, resources, and `involves` people of every
 task that (transitively) needs it. Attach a repo to a root task once, and all its subtasks get it.

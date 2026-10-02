@@ -395,6 +395,19 @@ export class Core {
     return { nodes, edges, assignments: open.rows.map((r) => ({ eventId: r.id, recipient: r.recipient, tasks: r.tasks })) };
   }
 
+  /** Open tasks that need one of `closed` and now wait on nothing: what closing those tasks just made ready. */
+  async newlyReady(q: s.Q, closed: string[]): Promise<{ id: string; title: string }[]> {
+    if (!closed.length) return [];
+    const r = await q.query(
+      `SELECT DISTINCT t.id, t.title FROM edges e JOIN nodes t ON t.id = e.src JOIN nodes d ON d.id = e.dst
+       WHERE e.kind = 'needs' AND e.dst::text = ANY($1) AND d.status <> 'open' AND t.status = 'open'
+         AND NOT EXISTS (SELECT 1 FROM edges w JOIN nodes n ON n.id = w.dst WHERE w.kind = 'needs' AND w.src = t.id AND n.status = 'open')
+       ORDER BY t.title`,
+      [closed],
+    );
+    return r.rows.map((x) => ({ id: x.id as string, title: x.title as string }));
+  }
+
   async nodeDetail(id: string) {
     const node = await s.getNode(this.db, id);
     const all = await s.listEdges(this.db);

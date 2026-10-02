@@ -21,7 +21,8 @@ import { who } from './store';
 export const WORK_INSTRUCTIONS = `Interactive sessions: when the user asks you to handle the next Ariadne assignment, call
 list_assignments and pick the FIRST item you have the capability to handle here (the repo it needs, access, tools,
 knowledge). claim_assignment it; if the claim fails, take the next one. Follow the brief it returns, then
-submit_result. Any call that passes the item's id (as because or eventId) keeps your claim alive; on long quiet work,
+submit_result. When finishing work makes other tasks ready, submit_result and apply_ops list them as nowReady:
+offer the user the next one, or assign it. Any call that passes the item's id (as because or eventId) keeps your claim alive; on long quiet work,
 call still_working. Before you stop to wait for the user's reply, call still_working with waitingOnUser: true.`;
 
 /** Items waiting for an interactive session: pending, not finished, for you or an unpaused interactive agent. */
@@ -100,7 +101,7 @@ export const WORK_TOOLS: Tool[] = [
   {
     name: 'submit_result',
     description:
-      'Report on an item, whether or not this session claimed it. status: done completes it; blocked, question, and progress keep it open. A progress report is an FYI: recorded on the thread, but not queued for anyone. For an assignment, body (required) is your report to whoever assigned it; lead with the outcome. For a report there is nothing to answer: done marks it handled. proposals: graph changes for your supervisor to apply (same ops as apply_ops); the Analyst applies its own with apply_ops instead. Fails only if the item is missing or already completed.',
+      'Report on an item, whether or not this session claimed it. status: done completes it; blocked, question, and progress keep it open. A progress report is an FYI: recorded on the thread, but not queued for anyone. Done lists the tasks that just became ready (nowReady), also in the report. For an assignment, body (required) is your report to whoever assigned it; lead with the outcome. For a report there is nothing to answer: done marks it handled. proposals: graph changes for your supervisor to apply (same ops as apply_ops); the Analyst applies its own with apply_ops instead. Fails only if the item is missing or already completed.',
     input: z.object({
       eventId: z.uuid(),
       status: z.enum(['done', 'blocked', 'question', 'progress']),
@@ -116,10 +117,13 @@ export const WORK_TOOLS: Tool[] = [
       const done = a.status === 'done';
       const result = await core.run(who(me, 'mcp', ev.id), async (c, after) => {
         let reportId: string | null = null;
+        // Done: the tasks that finishing this assignment's tasks made ready, so the next step is in the report.
+        const nowReady = done && ev.kind === 'assign' ? await core.newlyReady(c.tx, ev.tasks) : [];
         if (ev.kind === 'assign') {
           const label = { done: '', blocked: '**Blocked.** ', question: '**Question.** ', progress: '**Progress.** ' }[a.status];
+          const ready = nowReady.length ? `\n\nNow ready:\n${nowReady.map((t) => `- ${t.title} (${t.id})`).join('\n')}` : '';
           reportId = (
-            await core.sendTx(c, after, me, { kind: 'report', replyTo: ev.id, closes: done, progress: a.status === 'progress', body: `${label}${a.body}`, ...(a.proposals?.length ? { proposals: a.proposals } : {}) })
+            await core.sendTx(c, after, me, { kind: 'report', replyTo: ev.id, closes: done, progress: a.status === 'progress', body: `${label}${a.body}${ready}`, ...(a.proposals?.length ? { proposals: a.proposals } : {}) })
           ).id;
         }
         await core.closeReleaseNoticesTx(c, ev.id);
@@ -127,7 +131,7 @@ export const WORK_TOOLS: Tool[] = [
           await c.tx.query(`UPDATE events SET delivery = 'delivered', delivered_at = coalesce(delivered_at, now()) WHERE id = $1`, [ev.id]);
           await core.cancelTimerTx(c, claimKey(ev.id));
         } else if ((await s.getEvent(c.tx, ev.id)).delivery === 'claimed') await core.extendClaimTx(c, ev.id);
-        return { reportId, completed: done };
+        return { reportId, completed: done, ...(nowReady.length ? { nowReady } : {}) };
       });
       if (done) core.hub.clearStatus(me);
       return result;

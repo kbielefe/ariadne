@@ -241,6 +241,37 @@ describe('claims', () => {
     await client.close();
   });
 
+  it('says which tasks just became ready when tasks close, in apply_ops and the done report', async () => {
+    const [root, a, b, next] = (
+      await core.ops(who(USER_ID, 'ui'), [
+        { op: 'create_node', ref: 'root', kind: 'task', title: 'Ship it' },
+        { op: 'create_node', ref: 'a', kind: 'task', title: 'Build' },
+        { op: 'create_node', ref: 'b', kind: 'task', title: 'Test' },
+        { op: 'create_node', ref: 'next', kind: 'task', title: 'Demo' },
+        { op: 'create_edge', src: '$root', kind: 'needs', dst: '$a' },
+        { op: 'create_edge', src: '$root', kind: 'needs', dst: '$b' },
+        { op: 'create_edge', src: '$next', kind: 'needs', dst: '$a' },
+      ])
+    )
+      .filter((x) => x.ref)
+      .map((x) => x.id) as string[];
+    const ask = await core.send(who(USER_ID, 'mcp'), { kind: 'assign', recipient: ANALYST_ID, body: 'Build it', tasks: [a!] });
+    const client = await mcp();
+    await call(client, 'claim_assignment', { eventId: ask.id });
+
+    // Closing Build makes Demo ready; Ship it still waits on Test.
+    const closed = await call<{ nowReady?: unknown[] }>(client, 'apply_ops', { ops: [{ op: 'update_node', id: a, status: 'done' }], because: ask.id });
+    expect(closed.nowReady).toEqual([{ id: next, title: 'Demo' }]);
+    const done = await call<{ reportId: string; nowReady?: unknown[] }>(client, 'submit_result', { eventId: ask.id, status: 'done', body: 'Built.' });
+    expect(done.nowReady).toEqual([{ id: next, title: 'Demo' }]);
+    expect((await s.getEvent(db, done.reportId)).body).toBe(`Built.\n\nNow ready:\n- Demo (${next})`);
+
+    // Only tasks this batch closed count; nothing new: no nowReady.
+    expect((await call<{ nowReady?: unknown[] }>(client, 'apply_ops', { ops: [{ op: 'update_node', id: a, status: 'done' }] })).nowReady).toBeUndefined();
+    expect((await call<{ nowReady?: unknown[] }>(client, 'apply_ops', { ops: [{ op: 'update_node', id: b, status: 'dropped' }] })).nowReady).toEqual([{ id: root, title: 'Ship it' }]);
+    await client.close();
+  });
+
   it('schedules events, cancels them, and sends the due ones', async () => {
     const client = await mcp();
     const keep = await call<{ id: string }>(client, 'schedule_event', { inMinutes: 10, event: { kind: 'report', to: USER_ID, body: 'Stand-up in 5' } });
