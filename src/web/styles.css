@@ -381,41 +381,6 @@ code,
 .filters fieldset:disabled {
   opacity: 0.5;
 }
-.node-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-.node-row {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  width: 100%;
-  border: 0;
-  border-radius: 6px;
-  background: none;
-  padding: 3px 6px;
-  text-align: left;
-  cursor: pointer;
-  color: inherit;
-}
-.node-row span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.node-row svg {
-  flex: none;
-}
-.node-row:hover {
-  background: var(--surface-2);
-}
-.node-row.on {
-  background: var(--accent-soft);
-}
-.node-row.closed {
-  color: var(--muted);
-}
 .canvas-wrap {
   position: relative;
   min-width: 0;

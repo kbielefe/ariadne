@@ -177,5 +177,6 @@ Claude Code sessions ──MCP (/mcp)──► server     the Analyst, and inter
   nodes, edges, and events.
 - **Focus:** the focus task in the top bar is remembered across reloads. While focused, a **Show all** button on
   the canvas returns to the full graph.
-- **Shown list:** the left sidebar lists the nodes on the canvas (click selects, double-click focuses), sorted
-  ready first, recently updated, recently created, or by title. The choice is remembered.
+- **Order:** a control in the left sidebar sets how side-by-side nodes are ordered in the layout: ready first,
+  oldest first, newest first, recently updated, or title. Changing it lays the graph out again; it is remembered.
+  dagre may still move a node with children to avoid edge crossings; leaves always follow the order.
