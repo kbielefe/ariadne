@@ -229,4 +229,22 @@ describe('web API', () => {
     const hist = (await (await fetch(`${base}/api/history`)).json()) as { who: string; line: string }[];
     expect(hist).toMatchObject([{ who: 'You (the user)', line: 'created task "Mine"' }]);
   });
+
+  it("shows a task's reports in its details: only events linked to it, oldest first", async () => {
+    const [task, other] = (
+      await core.ops(who(USER_ID, 'ui'), [
+        { op: 'create_node', ref: 't', kind: 'task', title: 'Ship it' },
+        { op: 'create_node', ref: 'o', kind: 'task', title: 'Something else' },
+      ])
+    ).map((x) => x.id);
+    const first = await core.send(who(ANALYST_ID, 'mcp'), { kind: 'report', recipient: USER_ID, body: 'Started.', tasks: [task!] });
+    await core.send(who(ANALYST_ID, 'mcp'), { kind: 'report', recipient: USER_ID, body: 'Unrelated.', tasks: [other!] });
+    const second = await core.send(who(ANALYST_ID, 'mcp'), { kind: 'report', recipient: USER_ID, body: '## Done\n\nShipped.', tasks: [task!, other!] });
+
+    const detail = (await (await fetch(`${base}/api/nodes/${task}`)).json()) as { events: { id: string; body: string; tasks: string[] }[] };
+    expect(detail.events.map((e) => e.id)).toEqual([first.id, second.id]);
+    expect(detail.events[1]).toMatchObject({ body: '## Done\n\nShipped.', tasks: expect.arrayContaining([task, other]) });
+    const byTask = (await (await fetch(`${base}/api/events?task=${task}`)).json()) as { id: string }[];
+    expect(byTask.map((e) => e.id)).toEqual([first.id, second.id]);
+  });
 });

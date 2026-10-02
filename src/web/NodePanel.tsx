@@ -1,4 +1,4 @@
-import { Check, Crosshair, Pencil, Plus, Trash2, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Crosshair, Pencil, Plus, Trash2, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { ACTOR_KINDS, ANALYST_ID, EDGE_RULES, type Edge, type EdgeKind, Effort, type Event, type Node, type NodeKind, type Op, ResourceType, USER_ID } from '../shared/model';
 import { api, type NodeDetail } from './api';
@@ -405,65 +405,93 @@ function AddEdge({ node: n, run }: { node: Node; run(ops: Op[]): Promise<unknown
 
 // ---------------------------------------------------------------- events
 
+/** First non-empty line of a markdown body, roughly de-marked, for a collapsed event. */
+function preview(body: string): string {
+  const line = body.split('\n').find((l) => l.trim()) ?? '';
+  const plain = line.replace(/^\s*(#+|[-*+]|\d+\.|>)\s*/, '').replace(/[*_`]/g, '').replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').trim();
+  return plain.length > 140 ? `${plain.slice(0, 140)}…` : plain;
+}
+
 function Events({ node: n, events, run }: { node: Node; events: Event[]; run(ops: Op[]): Promise<unknown> }) {
   const { name } = useApp();
   const [editing, setEditing] = useState<string | null>(null);
+  // Bodies start collapsed to a one-line preview; click the header to read the whole thing.
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
+  const toggle = (id: string) => setExpanded((s) => (s.has(id) ? new Set([...s].filter((x) => x !== id)) : new Set([...s, id])));
   if (!events.length) return null;
   return (
-    <Section title={`Events (${events.length})`} open={events.length < 6}>
+    <Section title={n.kind === 'task' ? `Reports and assignments (${events.length})` : `Events (${events.length})`}>
       <ul className="events">
-        {[...events].reverse().map((e) => (
-          <li key={e.id} className={`ev ev-${e.kind}`}>
-            <div className="ev-head">
-              <span className="tag">{e.card ? 'card' : e.kind}</span>
-              <span>
-                {name(e.sender)} → {name(e.recipient)}
-              </span>
-              {e.state && <span className={`tag ${e.state}`}>{e.state}</span>}
-              <span className="muted small">{ago(e.createdAt)}</span>
-            </div>
-            {editing === e.id ? (
-              <EventEditor ev={e} run={run} done={() => setEditing(null)} />
-            ) : (
-              <>
-                {e.card && <strong>{e.card.title}</strong>}
-                <Md text={e.body.length > 400 ? `${e.body.slice(0, 400)}…` : e.body} />
-                {Object.entries(e.decisions).length > 0 && (
-                  <p className="muted small">
-                    {Object.entries(e.decisions)
-                      .map(([k, d]) => `${k}: ${String(d.value)} (${d.by}${d.confidence != null ? ` ${Math.round(d.confidence * 100)}%` : ''})`)
-                      .join(' · ')}
-                  </p>
-                )}
-                <div className="chips">
-                  {e.tasks
-                    .filter((t) => t !== n.id)
-                    .map((t) => (
-                      <NodeChip key={t} id={t} />
-                    ))}
-                </div>
-                <div className="row">
-                  <button className="link small" onClick={() => setEditing(e.id)}>
-                    Edit
+        {[...events].reverse().map((e) => {
+          const open = expanded.has(e.id) || editing === e.id;
+          return (
+            <li key={e.id} className={`ev ev-${e.kind}`}>
+              <button type="button" className="ev-head ev-toggle" aria-expanded={open} onClick={() => toggle(e.id)}>
+                {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                <span className="tag">{e.card ? 'card' : e.kind}</span>
+                <span>
+                  {name(e.sender)} → {name(e.recipient)}
+                </span>
+                {e.state && <span className={`tag ${e.state}`}>{e.state}</span>}
+                <span className="muted small" title={new Date(e.createdAt).toLocaleString()}>
+                  {ago(e.createdAt)}
+                </span>
+              </button>
+              {!open ? (
+                (e.card || e.body) && (
+                  <button type="button" className="ev-preview muted small" onClick={() => toggle(e.id)}>
+                    {e.card ? e.card.title : preview(e.body)}
                   </button>
-                  {n.kind === 'task' && (
-                    <button className="link small" onClick={() => void run([{ op: 'update_event', id: e.id, tasks: e.tasks.filter((t) => t !== n.id) }])}>
-                      Unlink from this task
-                    </button>
+                )
+              ) : editing === e.id ? (
+                <EventEditor ev={e} run={run} done={() => setEditing(null)} />
+              ) : (
+                <>
+                  {e.card && <strong>{e.card.title}</strong>}
+                  <Md text={e.body} />
+                  {e.instructions && (
+                    <div className="ev-instructions">
+                      <span className="muted small">Instructions</span>
+                      <Md text={e.instructions} />
+                    </div>
                   )}
-                  <button
-                    className="link small danger"
-                    onClick={() => {
-                      if (confirm('Delete this event?')) void run([{ op: 'delete_event', id: e.id }]);
-                    }}
-                  >
-                    Delete
-                  </button>
-                </div>
-              </>
-            )}
-          </li>
-        ))}
+                  {Object.entries(e.decisions).length > 0 && (
+                    <p className="muted small">
+                      {Object.entries(e.decisions)
+                        .map(([k, d]) => `${k}: ${String(d.value)} (${d.by}${d.confidence != null ? ` ${Math.round(d.confidence * 100)}%` : ''})`)
+                        .join(' · ')}
+                    </p>
+                  )}
+                  <div className="chips">
+                    {e.tasks
+                      .filter((t) => t !== n.id)
+                      .map((t) => (
+                        <NodeChip key={t} id={t} />
+                      ))}
+                  </div>
+                  <div className="row">
+                    <button className="link small" onClick={() => setEditing(e.id)}>
+                      Edit
+                    </button>
+                    {n.kind === 'task' && (
+                      <button className="link small" onClick={() => void run([{ op: 'update_event', id: e.id, tasks: e.tasks.filter((t) => t !== n.id) }])}>
+                        Unlink from this task
+                      </button>
+                    )}
+                    <button
+                      className="link small danger"
+                      onClick={() => {
+                        if (confirm('Delete this event?')) void run([{ op: 'delete_event', id: e.id }]);
+                      }}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </>
+              )}
+            </li>
+          );
+        })}
       </ul>
     </Section>
   );
