@@ -40,7 +40,7 @@ RabbitMQ to decouple agents from the core.
 | Kind | From → to | Meaning |
 |---|---|---|
 | `needs` | task → task | Must be done first (subtask or blocker). Acyclic |
-| `uses` | task → resource | Repo, Jenkins build, library docs, link |
+| `uses` | task → resource | Repo, branch, Jenkins build, library docs, link |
 | `involves` | task → actor | Coordinate with this person, agent, or team |
 | `reports_to` | actor → actor | Supervisor. Acyclic |
 | `member_of` | person/agent → team | |
@@ -56,6 +56,11 @@ task that (transitively) needs it. Attach a repo to a root task once, and all it
 them with the body, and MCP `search` with `decisions: true` finds only nodes that have them and returns
 the lines. The Analyst's instructions say to record them this way.
 
+**Branches are shared scopes:** a resource with `attrs.type` `branch` (plus `repo` and `branch`)
+groups work that ships in one PR. Every task that uses it, and everything those tasks need, is in
+its scope. A delivery lists each branch its tasks use with all the tasks in its scope (`branches`),
+and the brief says to do the work on that branch and open one PR when they're all done.
+
 **Well-known actors:** *You* (`…0001`) and *Analyst* (`…0002`, which reports to you). They can be
 edited but not deleted.
 
@@ -69,6 +74,7 @@ edited but not deleted.
 | Context, repos, Jenkins | Nearby resources | `uses` edges |
 | On receiving an assignment / returning results | The recipient's `briefs.onAssignment` / `onReport` + the event's `instructions` | — |
 | On assigning / receiving results | The assigner's `briefs.onDelegate` / `onReview` | — |
+| When to stop (run-until) | What the user said ("until the branch is ready for PR"), via `assign`'s `until` | The assign event's `decisions.until`; the brief says to keep going without asking until it's met, or until blocked or a decision is needed |
 
 Each entry in `decisions` records `by` (jev / analyst / default / user) and `confidence`.
 

@@ -11,6 +11,12 @@ Your job, for each event you handle:
 - Keep the graph true. Tasks are nodes; "A needs B" edges break work down and order it (a task nothing
   needs is a root, the user's goal). Attach repos, Jenkins builds, and docs with "uses"; people to
   coordinate with with "involves". Put things on the highest task they apply to: subtasks inherit them.
+- Work that must ship together in one branch and PR ("everything until X goes in the same branch"): a
+  resource with attrs {type: "branch", repo, branch} that the highest such task "uses", not a note in a body.
+- Check a task is clear before you work on it or delegate it: is the title specific (what, where), and is
+  it clear when it's done? If not and the context tells you, rename it and put the finish line in its body;
+  if you can't tell, ask the user ("What do you mean by 'cut the first tag'?") before starting. Give new
+  tasks specific titles too.
 - Delegate. Use "assign" to give work to your subordinates (see "subordinates" in the delivery) with
   the tasks it's about.
 - Conversations with people or teams: "assign" to that person or team, with the questions in the body.
@@ -21,6 +27,9 @@ Your job, for each event you handle:
   that should wait (not for now), leave it with ask_user / tell_user. Withdraw ones that stop mattering.
 - For quick classification (is this X or Y? how hard is this?), "decide" asks a System One model:
   fast and calibrated, but it cannot write text. Act on high confidence only.
+- When the user says how far to go ("proceed, committing between tasks, until the branch is ready for PR"),
+  put it on the assignment instead of waiting to be told again: "until" for where to stop, "instructions" for
+  how to work. If an event you handle has "until" in its decisions, keep going until it's met.
 - Always pass "because": <the event id you're handling> on changes.
 
 Never invent facts about people or systems. If something is unknown, ask or leave it out.
@@ -38,13 +47,37 @@ function taskMd(t: TaskContext): string {
   for (const g of t.guidance) lines.push('', `Guidance${g.from === 'self' ? '' : ` (from "${g.from.title}")`}: ${g.item}`);
   if (t.resources.length) {
     lines.push('', 'Resources:');
-    for (const r of t.resources) lines.push(`- ${r.item.name}${r.item.type ? ` [${String(r.item.type)}]` : ''}${r.item.url ? ` ${String(r.item.url)}` : ''}${r.item.note ? ` — ${r.item.note}` : ''}${r.item.about ? `\n  ${r.item.about}` : ''}`);
+    for (const r of t.resources) lines.push(`- ${r.item.name}${r.item.type ? ` [${String(r.item.type)}]` : ''}${r.item.branch ? ` ${String(r.item.branch)}` : ''}${r.item.repo ? ` in ${String(r.item.repo)}` : ''}${r.item.url ? ` ${String(r.item.url)}` : ''}${r.item.note ? ` — ${r.item.note}` : ''}${r.item.about ? `\n  ${r.item.about}` : ''}`);
   }
   if (t.coordinateWith.length) {
     lines.push('', 'Coordinate with:');
     for (const c of t.coordinateWith) lines.push(`- ${c.item.name} (${c.item.kind})${c.item.areas ? `: ${(c.item.areas as string[]).join(', ')}` : ''}${c.item.note ? ` — ${c.item.note}` : ''}`);
   }
   return lines.join('\n');
+}
+
+/** The assignment's run-until policy (decisions.until): keep going without asking until it's met. */
+function untilMd(e: Delivery['event']): string {
+  const until = e.decisions?.until?.value;
+  if (typeof until !== 'string' || !until) return '';
+  return section(
+    'Keep going until',
+    `${until}
+
+Don't stop to ask whether to continue: work through the tasks (ready ones first) until this is met.
+Stop early only if you are blocked or need a decision you can't make yourself, and say so in your report.`,
+  );
+}
+
+/** Branches are shared scopes: every task that uses one ships in the same PR. */
+function branchesMd(d: Delivery): string {
+  if (!d.branches?.length) return '';
+  const one = (b: NonNullable<Delivery['branches']>[number]) =>
+    `Branch \`${String(b.branch ?? b.name)}\`${b.repo ? ` in ${String(b.repo)}` : ''}${b.url ? ` (${String(b.url)})` : ''}. These tasks share it and ship together in one PR:\n${b.tasks.map((t) => `- ${t.title} (${t.status})`).join('\n')}`;
+  return section(
+    'Branch: one PR for these tasks',
+    `${d.branches.map(one).join('\n\n')}\n\nDo this work on that branch (create it if it doesn't exist yet), not a new one per task. Open the PR when all of its tasks are done, not after each one.`,
+  );
 }
 
 /** For the analyst: the delivery as JSON (it can call get_context for more), plus what to do now. */
@@ -56,7 +89,8 @@ export function analystPrompt(d: Delivery): string {
         : e.kind === 'report'
           ? `${e.from} reported (event ${e.id}, replying to ${e.replyTo ?? 'nothing'}). Review it (your onReview brief), apply or escalate its proposals, and tell the user only if it matters to them.`
           : `${e.from} sent you an assignment (event ${e.id}). Handle it.`;
-  return `${what}\n\nThe delivery:\n\n\`\`\`json\n${JSON.stringify(d, null, 1)}\n\`\`\`\n`;
+  const extra = [untilMd(e), branchesMd(d)].filter(Boolean).join('\n');
+  return `${what}\n\n${extra ? `${extra}\n` : ''}The delivery:\n\n\`\`\`json\n${JSON.stringify(d, null, 1)}\n\`\`\`\n`;
 }
 
 /** For a session that claimed an event for the user: ask or tell them, then record it. */
@@ -93,8 +127,17 @@ export function agentPrompt(d: Delivery, answer = fencedAnswer(d)): string {
     section('How you report back', briefs.onReport),
     e.kind === 'assign' ? section(`Assignment from ${e.from}`, e.body) : section(`Report from ${e.from}`, e.body),
     section('Instructions for this assignment', e.instructions),
+    untilMd(e),
     d.inReplyTo ? section('This replies to', d.inReplyTo.body) : '',
     d.tasks.length ? section('Tasks', d.tasks.map(taskMd).join('\n\n')) : '',
+    e.kind === 'assign' && d.tasks.length
+      ? section(
+          'Before you start',
+          `Check each task: is the title specific, and is it clear when it's done? If not and the context tells you, propose a clearer title
+(update_node) with the finish line in its body. If you can't tell what is meant, ask (status "question") instead of guessing.`,
+        )
+      : '',
+    branchesMd(d),
     d.thread.length ? section('Recent history on these tasks', d.thread.map((t) => `- ${t.at} ${t.from} → ${t.to} (${t.kind}): ${t.body.split('\n')[0]}`).join('\n')) : '',
     d.subordinates.length
       ? section(

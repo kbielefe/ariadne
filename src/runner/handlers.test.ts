@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Delivery } from '../server/context';
 import type { InboxMessage } from '../shared/model';
 import { handleAgent, handleDecider, jev, type RunOptions } from './handlers';
-import { agentPrompt, parseAgentOutput } from './prompts';
+import { ANALYST_SYSTEM, agentPrompt, parseAgentOutput } from './prompts';
 
 const ME = '11111111-1111-4111-8111-111111111111';
 const EV = '22222222-2222-4222-8222-222222222222';
@@ -44,6 +44,18 @@ describe('agent prompts', () => {
     expect(p).toContain('Read the README first.');
     expect(p).toContain('Guidance (from "Ship SSO"): Small PRs.');
     expect(p).toContain('- agent-framework [repo] https://github.com/x/y');
+  });
+
+  it('say when to stop, only when the assignment has a run-until policy', () => {
+    expect(agentPrompt(delivery())).not.toContain('Keep going until');
+    const p = agentPrompt(delivery({ decisions: { until: { value: 'The branch is ready for a PR', by: 'analyst' } } }));
+    expect(p).toContain('## Keep going until\n\nThe branch is ready for a PR');
+  });
+
+  it('ask for a check that each task is clear before starting', () => {
+    expect(agentPrompt(delivery())).toContain("## Before you start\n\nCheck each task: is the title specific, and is it clear when it's done?");
+    expect(agentPrompt(delivery({ kind: 'report' }))).not.toContain('Before you start');
+    expect(ANALYST_SYSTEM).toContain('Check a task is clear before you work on it');
   });
 
   it('parse the optional ariadne block', () => {

@@ -20,6 +20,8 @@ const INSTRUCTIONS = `You are the Analyst inside Ariadne: the user's trusted ext
 Ariadne holds a graph (tasks, people, agents, teams, resources; edges needs/uses/involves/reports_to/member_of)
 and a log of events (assign / report). Every tool call is audited and can be undone by the user.
 Pass "because" = the id of the event you are handling, so your changes are grouped under it.
+Before working on a task, check it is clear: a specific title, and a clear point where it is done. If not, rename it
+(when the context tells you what is meant) or ask the user first.
 
 Decisions: when the user (or anyone) makes a decision about a task, record it in that task's body as its own line,
 "**Decision (Name, YYYY-MM-DD):** what was decided, and why in a few words" (update_node; keep the rest of the body).
@@ -136,12 +138,13 @@ const tools: Tool[] = [
       tasks: z.array(z.uuid()).describe('Tasks this assignment is about'),
       body: z.string().min(1).describe('What to do, in markdown'),
       instructions: z.string().optional().describe('How to do it / how to report back, for this assignment only'),
+      until: z.string().optional().describe('When to stop: keep working without asking until this is met (or blocked, or a decision is needed). E.g. "through the ready subtasks of X, committing between tasks, until the branch is ready for a PR"'),
       model: z.string().optional(),
       effort: Effort.optional(),
       dueInMinutes: z.number().positive().optional().describe('You get a report from Ariadne if nothing arrives by then'),
       because,
     }),
-    run: async (core, a: { to: string; tasks: string[]; body: string; instructions?: string; model?: string; effort?: string; dueInMinutes?: number }, b) =>
+    run: async (core, a: { to: string; tasks: string[]; body: string; instructions?: string; until?: string; model?: string; effort?: string; dueInMinutes?: number }, b) =>
       core.send(who(ANALYST_ID, 'mcp', b), {
         kind: 'assign',
         recipient: a.to,
@@ -149,6 +152,7 @@ const tools: Tool[] = [
         body: a.body,
         instructions: a.instructions ?? '',
         decisions: {
+          ...(a.until ? { until: { value: a.until, by: 'analyst' } } : {}),
           ...(a.model ? { model: { value: a.model, by: 'analyst' } } : {}),
           ...(a.effort ? { effort: { value: a.effort, by: 'analyst' } } : {}),
         },

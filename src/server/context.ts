@@ -3,7 +3,8 @@
 //
 // Context is inherited down the `needs` graph: a task gets the guidance, resources, and people of
 // every task that (transitively) needs it, so a repo attached to a root task reaches all its subtasks.
-import { ancestorTasks, readiness } from '../shared/graph';
+// A branch resource is a shared scope: every task in it ships together in one PR (Delivery.branches).
+import { ancestorTasks, reachable, readiness } from '../shared/graph';
 import { ANALYST_ID, type Edge, type Event, type Node, USER_ID } from '../shared/model';
 import * as s from './store';
 import type { Q } from './store';
@@ -19,6 +20,8 @@ export interface Delivery {
   thread: EventView[];
   supervisor: ActorView | null;
   subordinates: ActorView[];
+  /** Branches these tasks use (directly or inherited), with every task that shares each one. */
+  branches?: BranchScope[];
   howToReply: string;
   analyst?: AnalystExtras;
 }
@@ -74,9 +77,19 @@ export interface TaskContext {
   needs: (Ref & { status: Node['status'] })[];
   neededBy: Ref[];
   guidance: Inherited<string>[];
-  resources: Inherited<{ id: string; name: string; type?: unknown; url?: unknown; about: string; note: string }>[];
+  resources: Inherited<{ id: string; name: string; type?: unknown; url?: unknown; repo?: unknown; branch?: unknown; about: string; note: string }>[];
   coordinateWith: Inherited<ActorView & { note: string }>[];
   openAssignments: { eventId: string; to: string }[];
+}
+
+/** A branch resource and the open or done tasks that use it, directly or through a task that needs them. */
+export interface BranchScope {
+  id: string;
+  name: string;
+  repo?: unknown;
+  branch?: unknown;
+  url?: unknown;
+  tasks: (Ref & { status: Node['status'] })[];
 }
 
 export interface AnalystExtras {
@@ -160,7 +173,8 @@ export class ContextBuilder {
       for (const e of this.edges.filter((x) => x.src === n.id)) {
         const d = this.nodes.get(e.dst);
         if (!d || seen.has(`${e.kind}:${d.id}`)) continue;
-        if (e.kind === 'uses') resources.push({ from: from(n), item: { id: d.id, name: d.title, type: d.attrs.type, url: d.attrs.url, about: truncate(d.body, 1000), note: e.note } });
+        if (e.kind === 'uses')
+          resources.push({ from: from(n), item: { id: d.id, name: d.title, type: d.attrs.type, url: d.attrs.url, ...(d.attrs.type === 'branch' ? { repo: d.attrs.repo, branch: d.attrs.branch } : {}), about: truncate(d.body, 1000), note: e.note } });
         else if (e.kind === 'involves') coordinateWith.push({ from: from(n), item: { ...actorView(d), note: e.note } });
         else continue;
         seen.add(`${e.kind}:${d.id}`);
@@ -183,6 +197,18 @@ export class ContextBuilder {
     };
   }
 
+  /** The branches the tasks' context includes, each with every task in its scope (the tasks that use it and what they need). */
+  branches(tasks: TaskContext[]): BranchScope[] {
+    const ids = new Set(tasks.flatMap((t) => t.resources).filter((r) => r.item.type === 'branch').map((r) => r.item.id));
+    return [...ids].map((id) => {
+      const b = this.nodes.get(id)!;
+      const scope = new Set<string>();
+      for (const e of this.edges.filter((x) => x.kind === 'uses' && x.dst === id)) for (const t of reachable(this.edges, e.src, { kinds: ['needs'] }).keys()) scope.add(t);
+      const inScope = [...scope].map((t) => this.nodes.get(t)!).filter((n) => n && n.status !== 'dropped');
+      return { id, name: b.title, repo: b.attrs.repo, branch: b.attrs.branch, url: b.attrs.url, tasks: inScope.map((n) => ({ id: n.id, title: n.title, status: n.status })) };
+    });
+  }
+
   supervisor(id: string): Node | null {
     const e = this.edges.find((x) => x.kind === 'reports_to' && x.src === id);
     return e ? (this.nodes.get(e.dst) ?? null) : null;
@@ -203,15 +229,18 @@ export class ContextBuilder {
     const inReplyTo = ev.replyTo ? await s.findEvent(q, ev.replyTo) : null;
     const thread = ev.tasks.length ? (await s.listEvents(q, { tasks: ev.tasks, limit: 20 })).filter((e) => e.id !== ev.id) : [];
     const sup = this.supervisor(recipient.id);
+    const tasks = ev.tasks.filter((t) => this.nodes.has(t)).map((t) => this.task(t, open));
+    const branches = this.branches(tasks);
     const d: Delivery = {
       event: this.eventView(ev, 20000),
       recipient: actorView(recipient),
       sender: ev.sender && this.nodes.get(ev.sender) ? actorView(this.nodes.get(ev.sender)!) : null,
       inReplyTo: inReplyTo ? this.eventView(inReplyTo) : null,
-      tasks: ev.tasks.filter((t) => this.nodes.has(t)).map((t) => this.task(t, open)),
+      tasks,
       thread: thread.map((e) => this.eventView(e, 1500)),
       supervisor: sup ? actorView(sup) : null,
       subordinates: this.subordinates(recipient.id).map(actorView),
+      ...(branches.length ? { branches } : {}),
       howToReply: recipient.id === USER_ID
         ? `Ask or tell the user, then call submit_result with eventId "${ev.id}" (their answer as body, for an assignment).`
         : recipient.attrs.interactive
