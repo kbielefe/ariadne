@@ -30,7 +30,7 @@ brings you only what needs you. The web UI is the graph view. The design and its
    In any repo, say *"Handle the next ariadne assignment."* Claude calls `list_assignments`: things
    for you first (questions and notes it should ask or tell you), then your answers and agent reports
    for the Analyst, plus assignments for agents marked **interactive (Claude Code)**. Each item shows
-   the repos its tasks use. It claims the first one it can
+   the repos its tasks use (and any shared branch). It claims the first one it can
    handle there with `claim_assignment`, does the work, and calls `submit_result`. A claim with no word
    for `ARIADNE_CLAIM_TIMEOUT_MINUTES` (default 30) goes back on the list and you're told;
    any call that passes the item's id (`because` / `eventId`) or `still_working` resets the clock, and

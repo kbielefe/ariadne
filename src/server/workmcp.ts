@@ -44,7 +44,7 @@ export const WORK_TOOLS: Tool[] = [
   {
     name: 'list_assignments',
     description:
-      'What is waiting for an interactive session: things for the user first (ask or tell them), then from the user, then oldest. Each item shows who it is for, a summary, its tasks, and the repos they use. Pick the first one you have the capability to handle here and claim_assignment it. Listing claims nothing.',
+      'What is waiting for an interactive session: things for the user first (ask or tell them), then from the user, then oldest. Each item shows who it is for, a summary, its tasks, the repos they use, and any shared branch (its tasks ship in one PR). Pick the first one you have the capability to handle here and claim_assignment it. Listing claims nothing.',
     input: z.object({}),
     readOnly: true,
     run: async (core) => {
@@ -59,6 +59,7 @@ export const WORK_TOOLS: Tool[] = [
         const ev = await s.getEvent(core.db, row.id);
         const tasks = ev.tasks.filter((t) => ctx.nodes.has(t)).map((t) => ctx.task(t, []));
         const repos = new Map(tasks.flatMap((t) => t.resources).filter((x) => x.item.type === 'repo').map((x) => [x.item.id, { name: x.item.name, ...(x.item.url ? { url: x.item.url } : {}) }]));
+        const branches = ctx.branches(tasks).map((b) => ({ name: b.name, ...(b.repo ? { repo: b.repo } : {}), ...(b.branch ? { branch: b.branch } : {}) }));
         items.push({
           eventId: ev.id,
           kind: ev.kind,
@@ -67,6 +68,7 @@ export const WORK_TOOLS: Tool[] = [
           summary: ev.body.length > 200 ? `${ev.body.slice(0, 200)}…` : ev.body,
           tasks: tasks.map((t) => ({ id: t.id, title: t.title })),
           repos: [...repos.values()],
+          ...(branches.length ? { branches } : {}),
           createdAt: ev.createdAt,
         });
       }

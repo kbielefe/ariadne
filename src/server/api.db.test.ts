@@ -394,6 +394,8 @@ describe('briefs', () => {
     expect(d.branches![0]!.tasks.map((t) => t.title).sort()).toEqual(['Add the CLI', 'Add the parser', 'Cut the first PDP tag']);
 
     const client = await mcp();
+    const { items } = await call<{ items: { eventId: string; branches?: unknown }[] }>(client, 'list_assignments', {});
+    expect(items.find((i) => i.eventId === ev.id)!.branches).toEqual([{ name: 'PDP first tag', repo: 'pdp', branch: 'feature/first-tag' }]);
     const { brief } = await call<{ brief: string }>(client, 'claim_assignment', { eventId: ev.id });
     expect(brief).toContain('## Branch: one PR for these tasks');
     expect(brief).toContain('Branch `feature/first-tag` in pdp');
