@@ -473,6 +473,17 @@ code,
 .field-edit > .row {
   margin: 0;
 }
+.copy-id {
+  flex: none;
+  align-items: center;
+  gap: 3px;
+}
+.copy-id.copied {
+  color: var(--good);
+}
+.copy-id.failed {
+  color: var(--danger);
+}
 .section {
   border-top: 1px solid var(--line);
   padding-top: 8px;

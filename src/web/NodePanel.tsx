@@ -1,4 +1,4 @@
-import { Check, ChevronDown, ChevronRight, Crosshair, Pencil, Plus, Trash2, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Copy, Crosshair, Pencil, Plus, Trash2, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { ACTOR_KINDS, ANALYST_ID, EDGE_RULES, type Edge, type EdgeKind, Effort, type Event, type Node, type NodeKind, type Op, ResourceType, USER_ID } from '../shared/model';
 import { api, type NodeDetail } from './api';
@@ -90,6 +90,7 @@ export function NodePanel({ id, onSelect, onClose }: { id: string; onSelect(id: 
       <div className="panel-head">
         <KindIcon kind={n.kind} size={18} />
         <InlineText value={n.title} onSave={(title) => save({ title })} className="title-input" label="Title" />
+        <CopyId id={id} />
         <button className="icon" aria-label="Close" onClick={onClose}>
           <X size={16} />
         </button>
@@ -130,6 +131,33 @@ export function NodePanel({ id, onSelect, onClose }: { id: string; onSelect(id: 
         Updated {ago(n.updatedAt)} · v{n.version} · <code>{n.id}</code>
       </p>
     </div>
+  );
+}
+
+/** Copies the node id (for MCP calls or notes), with a brief "copied" check. */
+function CopyId({ id }: { id: string }) {
+  const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle');
+  useEffect(() => {
+    if (state === 'idle') return;
+    const t = setTimeout(() => setState('idle'), 1500);
+    return () => clearTimeout(t);
+  }, [state]);
+  const label = state === 'copied' ? 'Copied id' : state === 'failed' ? `Couldn't copy; the id is ${id}` : 'Copy id';
+  return (
+    <button
+      className={`icon copy-id ${state}`}
+      aria-label={label}
+      title={label}
+      onClick={() =>
+        (navigator.clipboard?.writeText(id) ?? Promise.reject(new Error('no clipboard'))).then(
+          () => setState('copied'),
+          () => setState('failed'),
+        )
+      }
+    >
+      {state === 'copied' ? <Check size={15} /> : <Copy size={15} />}
+      {state === 'copied' && <span className="small">copied</span>}
+    </button>
   );
 }
 
