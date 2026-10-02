@@ -52,7 +52,10 @@ export function App() {
     <Ctx.Provider value={state}>
       <div className="app">
         <header className="topbar">
-          <span className="brand">Ariadne</span>
+          <span className="brand">
+            <img src="/favicon.svg" alt="" width={22} height={22} />
+            Ariadne
+          </span>
           <div className="focus">
             <Crosshair size={16} aria-hidden />
             {focusNode ? (

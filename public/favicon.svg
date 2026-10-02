@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect width="64" height="64" rx="14" fill="#1e1b4b"/>
+  <!-- Ariadne's thread: a path winding through graph nodes -->
+  <path d="M14 48 C14 30 30 40 32 28 S50 22 50 14" fill="none" stroke="#fbbf24" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="14" cy="48" r="6" fill="#fbbf24"/>
+  <circle cx="32" cy="28" r="6" fill="#a5b4fc"/>
+  <circle cx="50" cy="14" r="6" fill="#a5b4fc"/>
+</svg>
