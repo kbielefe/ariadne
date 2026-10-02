@@ -70,7 +70,7 @@ export function NewNodeForm({ onCreated }: { onCreated(id: string): void }) {
 
 // ================================================================ view / edit
 
-export function NodePanel({ id, onSelect }: { id: string; onSelect(id: string | null): void }) {
+export function NodePanel({ id, onSelect, onClose }: { id: string; onSelect(id: string | null): void; onClose(): void }) {
   const { version, setFocus, focus } = useApp();
   const [d, setD] = useState<NodeDetail | null>(null);
   const { error, run } = useOps();
@@ -90,7 +90,7 @@ export function NodePanel({ id, onSelect }: { id: string; onSelect(id: string | 
       <div className="panel-head">
         <KindIcon kind={n.kind} size={18} />
         <InlineText value={n.title} onSave={(title) => save({ title })} className="title-input" label="Title" />
-        <button className="icon" aria-label="Close" onClick={() => onSelect(null)}>
+        <button className="icon" aria-label="Close" onClick={onClose}>
           <X size={16} />
         </button>
       </div>

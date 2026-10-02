@@ -168,7 +168,14 @@ export function GraphView({ selected, onSelect }: { selected: string | null; onS
       </div>
       <aside className="panel" aria-label="Details" hidden={!panes.details}>
         {selected && byId.has(selected) ? (
-          <NodePanel id={selected} onSelect={onSelect} />
+          <NodePanel
+            id={selected}
+            onSelect={onSelect}
+            onClose={() => {
+              onSelect(null);
+              setPane({ details: false });
+            }}
+          />
         ) : creating || !graph.nodes.length ? (
           <NewNodeForm
             onCreated={(id) => {
@@ -178,10 +185,7 @@ export function GraphView({ selected, onSelect }: { selected: string | null; onS
           />
         ) : (
           <div className="panel-empty">
-            <p>Select something to see and edit it, or</p>
-            <button className="btn" onClick={() => setCreating(true)}>
-              <Plus size={14} /> Create a node
-            </button>
+            <p>Select something to see and edit it, or use “+ New”.</p>
           </div>
         )}
       </aside>
