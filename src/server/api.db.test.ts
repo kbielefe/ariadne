@@ -340,6 +340,18 @@ describe('web API', () => {
     const byTask = (await (await fetch(`${base}/api/events?task=${task}`)).json()) as { id: string }[];
     expect(byTask.map((e) => e.id)).toEqual([first.id, second.id]);
   });
+
+  it('returns the changeset of your edit, so Undo can revert it', async () => {
+    const made = (await (await post('/api/ops', { ops: [{ op: 'create_node', kind: 'resource', title: 'Old repo' }] })).json()) as { results: { id: string }[]; changeset: string };
+    const id = made.results[0]!.id;
+    const del = (await (await post('/api/ops', { ops: [{ op: 'delete_node', id }] })).json()) as { changeset: string };
+    expect(del.changeset).toMatch(/^[0-9a-f-]{36}$/);
+    await expect(s.getNode(db, id)).rejects.toThrow();
+    const undo = await post('/api/undo', { changeset: del.changeset });
+    expect(undo.status).toBe(200);
+    expect((await s.getNode(db, id)).title).toBe('Old repo');
+    expect((await post('/api/undo', { changeset: 'nope' })).status).toBe(400);
+  });
 });
 
 describe('briefs', () => {

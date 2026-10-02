@@ -30,7 +30,8 @@ async function call<T>(method: 'GET' | 'POST', path: string, body?: unknown): Pr
 export const api = {
   graph: () => call<GraphData>('GET', '/api/graph'),
   node: (id: string) => call<NodeDetail>('GET', `/api/nodes/${id}`),
-  ops: (ops: Op[]) => call<{ results: { op: string; id: string; ref?: string }[] }>('POST', '/api/ops', { ops }),
+  ops: (ops: Op[]) => call<{ results: { op: string; id: string; ref?: string }[]; changeset: string }>('POST', '/api/ops', { ops }),
+  undo: (changeset: string) => call<{ undone: number }>('POST', '/api/undo', { changeset }),
 };
 
 /** Live updates over SSE: `version` bumps whenever data changes. */

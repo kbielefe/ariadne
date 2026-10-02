@@ -10,8 +10,8 @@ import { NodeChip } from './bits';
  * audits the node and every edge it cascades, so it can be undone. Deleting is allowed even when open
  * tasks still use the node (a resource via `uses`, an actor via `involves`): the confirm warns and lists them.
  */
-export function DeleteNode({ detail: d, run, onDeleted }: { detail: NodeDetail; run(ops: Op[]): Promise<unknown>; onDeleted(): void }) {
-  const { byId } = useApp();
+export function DeleteNode({ detail: d, run, onDeleted }: { detail: NodeDetail; run(ops: Op[]): Promise<{ changeset: string } | null>; onDeleted(): void }) {
+  const { byId, notify } = useApp();
   const [asking, setAsking] = useState(false);
   const n = d.node;
   if (!asking)
@@ -41,9 +41,15 @@ export function DeleteNode({ detail: d, run, onDeleted }: { detail: NodeDetail; 
           </div>
         </>
       )}
-      <p className="muted small">It can be undone: ask the Analyst to undo it (MCP history / undo).</p>
+      <p className="muted small">You can undo it right after, or later by asking the Analyst (MCP history / undo).</p>
       <div className="row">
-        <button className="btn small danger" autoFocus onClick={async () => (await run([{ op: 'delete_node', id: n.id }])) && onDeleted()}>
+        <button className="btn small danger" autoFocus onClick={async () => {
+            const done = await run([{ op: 'delete_node', id: n.id }]);
+            if (!done) return;
+            notify(`Deleted ${n.title}.`, done.changeset);
+            onDeleted();
+          }}
+        >
           <Trash2 size={14} /> Delete
         </button>
         <button className="btn small" onClick={() => setAsking(false)}>

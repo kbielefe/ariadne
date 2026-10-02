@@ -52,7 +52,12 @@ export function registerApi(app: FastifyInstance, core: Core, o: ApiOptions) {
     return rows.map((a) => ({ ...a, line: describeChange(a, ctx), who: ctx.name(a.actor) }));
   });
 
-  app.post('/api/ops', async (req) => ({ results: await core.ops(who(USER_ID, 'ui'), (req.body as { ops?: unknown })?.ops) }));
+  // The changeset id lets the UI offer Undo right after a change.
+  app.post('/api/ops', async (req) => {
+    const w = who(USER_ID, 'ui');
+    return { results: await core.ops(w, (req.body as { ops?: unknown })?.ops), changeset: w.changeset };
+  });
+  app.post('/api/undo', async (req) => ({ undone: await core.undo(who(USER_ID, 'ui'), z.object({ changeset: z.uuid() }).parse(req.body).changeset) }));
 
   // Server-sent events: browsers refetch on "changed".
   app.get('/api/stream', (req: FastifyRequest, reply: FastifyReply) => {
