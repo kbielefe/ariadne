@@ -83,11 +83,11 @@ it('leaves events for interactive agents (the Analyst) for claim_assignment, not
   const ch = await conn.createChannel();
   await ch.deleteQueue(actorQueue(ANALYST_ID)).catch(() => {});
   await ch.assertQueue(actorQueue(ANALYST_ID), ACTOR_QUEUE_OPTIONS);
-  const chat = await core.chat('urgent question');
+  const note = await core.send(who(null, 'core'), { kind: 'report', recipient: ANALYST_ID, body: 'urgent question' });
   const publisher = amqpPublisher(URL, log);
   stops.push(() => publisher.close());
   expect(await new Relay(core, publisher, log).flush()).toBe(0);
   expect((await ch.checkQueue(actorQueue(ANALYST_ID))).messageCount).toBe(0);
-  expect((await s.getEvent(db, chat.id)).delivery).toBe('pending');
+  expect((await s.getEvent(db, note.id)).delivery).toBe('pending');
   await conn.close();
 });

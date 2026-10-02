@@ -113,7 +113,7 @@ const tools: Tool[] = [
   },
   {
     name: 'assign',
-    description: "Give work to an agent, person, or team. Agents receive it over RabbitMQ with the tasks' full context; people and teams become a proxy card for the user. Model and effort are chosen by a System One decider (or the agent's defaults) unless you set them.",
+    description: "Give work to an agent, person, or team. Agents receive it over RabbitMQ with the tasks' full context; people and teams become an 'Ask <name>' item for the user. Model and effort are chosen by a System One decider (or the agent's defaults) unless you set them.",
     input: z.object({
       to: z.uuid(),
       tasks: z.array(z.uuid()).describe('Tasks this assignment is about'),
@@ -139,22 +139,15 @@ const tools: Tool[] = [
       }),
   },
   {
-    name: 'reply',
-    description: 'Report on an assignment given to you (usually a user chat). closes=true (default) finishes it; use false for an interim note while work continues. Keep it short: the user sees this in their timeline.',
-    input: z.object({ replyTo: z.uuid(), body: z.string().min(1), closes: z.boolean().optional(), tasks: z.array(z.uuid()).optional() }),
-    run: async (core, a: { replyTo: string; body: string; closes?: boolean; tasks?: string[] }) =>
-      core.send(who(ANALYST_ID, 'mcp', a.replyTo), { kind: 'report', replyTo: a.replyTo, body: a.body, closes: a.closes ?? true, ...(a.tasks ? { tasks: a.tasks } : {}) }),
-  },
-  {
     name: 'tell_user',
-    description: 'A short markdown note to the user that needs no answer (an FYI in their timeline).',
+    description: 'Leave a short markdown note for the user that needs no answer. It waits in list_assignments until a session tells them. In a live session, just tell the user directly; use this only for things that should wait.',
     input: z.object({ body: z.string().min(1), tasks: z.array(z.uuid()).optional(), because }),
     run: async (core, a: { body: string; tasks?: string[] }, b) => core.send(who(ANALYST_ID, 'mcp', b), { kind: 'report', recipient: USER_ID, body: a.body, tasks: a.tasks ?? [] }),
   },
   {
     name: 'ask_user',
     description:
-      'Put a card in front of the user: an approval, a choice, a task list, a question. The card is an assignment to the user; their button press comes back to you as a report. Field types: text, textarea, select (options), checkbox, tasks (checklist of task ids; defaults to the card tasks). Ask only what needs them, with the minimum they need to decide.',
+      'Leave a question for the user: an approval, a choice, a task list. The card is an assignment to the user; it waits in list_assignments until a session asks them, and their answer comes back to you as a report. In a live session, just ask the user directly; use this only for things that should wait. Field types: text, textarea, select (options), checkbox, tasks (checklist of task ids; defaults to the card tasks). Ask only what needs them, with the minimum they need to decide.',
     input: z.object({ card: Card, body: z.string().optional().describe('Markdown shown on the card'), tasks: z.array(z.uuid()).optional(), because }),
     run: async (core, a: { card: unknown; body?: string; tasks?: string[] }, b) =>
       core.send(who(ANALYST_ID, 'mcp', b), { kind: 'assign', recipient: USER_ID, card: a.card as never, body: a.body ?? '', tasks: a.tasks ?? [] }),
@@ -176,16 +169,6 @@ const tools: Tool[] = [
     input: z.object({ state: z.string().min(1), questions: z.record(z.string(), Question), timeoutMs: z.number().int().max(30000).optional() }),
     readOnly: true,
     run: async (core, a: { state: string; questions: Record<string, unknown>; timeoutMs?: number }) => (await core.decide(ANALYST_ID, a.state, a.questions, a.timeoutMs)) ?? { answers: null },
-  },
-  {
-    name: 'set_status',
-    description: 'A one-line status under the timeline ("Reading the build logs…"). Empty text clears it.',
-    input: z.object({ text: z.string().max(200), eventId: z.uuid().optional() }),
-    readOnly: true,
-    run: async (core, a: { text: string; eventId?: string }) => {
-      core.hub.status({ actor: ANALYST_ID, text: a.text, ...(a.eventId ? { eventId: a.eventId } : {}) });
-      return { ok: true };
-    },
   },
   {
     name: 'schedule_event',

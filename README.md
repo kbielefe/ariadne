@@ -1,8 +1,8 @@
 # Ariadne v2
 
-**A task graph and an augmented chat for working with people, teams, and agents.** You chat
-with the Analyst, which is an interactive Claude Code session. It keeps the graph up to date,
-delegates to agents, and brings you only what needs you, as cards. The design and its reasons are in
+**A task graph for working with people, teams, and agents.** You talk to the Analyst in an
+interactive Claude Code session (over MCP). It keeps the graph up to date, delegates to agents, and
+brings you only what needs you. The web UI is the graph view. The design and its reasons are in
 [docs/DESIGN.md](docs/DESIGN.md).
 
 > **Localhost only.** Neither the web UI nor `/mcp` has authentication yet.
@@ -27,9 +27,10 @@ delegates to agents, and brings you only what needs you, as cards. The design an
    claude mcp add --scope user --transport http ariadne http://127.0.0.1:3100/mcp
    ```
 
-   In any repo, say *"Handle the next ariadne assignment."* Claude calls `list_assignments` (your
-   chats, card answers, and agent reports for the Analyst, plus assignments for agents marked
-   **interactive (Claude Code)**; each shows the repos its tasks use). It claims the first one it can
+   In any repo, say *"Handle the next ariadne assignment."* Claude calls `list_assignments`: things
+   for you first (questions and notes it should ask or tell you), then your answers and agent reports
+   for the Analyst, plus assignments for agents marked **interactive (Claude Code)**. Each item shows
+   the repos its tasks use. It claims the first one it can
    handle there with `claim_assignment`, does the work, and calls `submit_result`. A claim with no word
    for `ARIADNE_CLAIM_TIMEOUT_MINUTES` (default 30) goes back on the list and you're told;
    `still_working` resets the clock. Ariadne doesn't track which session claimed what: any session
@@ -62,5 +63,5 @@ v1 keeps running on port 3000. v2 uses 3100 (web) and 5674 (RabbitMQ).
 |---|---|
 | `src/shared` | The vocabulary: node kinds, edge rules, events, cards, ops, bus names, graph helpers |
 | `src/server` | Fastify API + SSE, MCP (incl. claims), core rules, timers, context packs, RabbitMQ relay and inbox |
-| `src/web` | React: Timeline (chat + cards) and Graph (cytoscape) |
+| `src/web` | React: the graph view (cytoscape) |
 | `src/runner` | Headless agent and decider runners, and the prompts/briefs |

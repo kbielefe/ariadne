@@ -212,7 +212,9 @@ export class ContextBuilder {
       thread: thread.map((e) => this.eventView(e, 1500)),
       supervisor: sup ? actorView(sup) : null,
       subordinates: this.subordinates(recipient.id).map(actorView),
-      howToReply: recipient.attrs.interactive
+      howToReply: recipient.id === USER_ID
+        ? `Ask or tell the user, then call submit_result with eventId "${ev.id}" (their answer as body, for an assignment).`
+        : recipient.attrs.interactive
         ? ev.kind === 'assign'
           ? `When finished, call the submit_result tool with eventId "${ev.id}", a status (done, blocked, question, or progress), a markdown body, and optional proposals (ops).`
           : 'This is a report. There is nothing to reply to.'

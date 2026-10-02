@@ -41,13 +41,12 @@ describe('graph', () => {
     expect(g.edges).toMatchObject([{ src: ANALYST_ID, kind: 'reports_to', dst: USER_ID }]);
   });
 
-  it('creates tasks with refs, and roots are tasks nothing needs', async () => {
+  it('creates tasks with refs; a task waits on what it needs', async () => {
     const t = await ids([
       { op: 'create_node', ref: 'root', kind: 'task', title: 'Ship v2' },
       { op: 'create_node', ref: 'sub', kind: 'task', title: 'Write the schema' },
       { op: 'create_edge', src: '$root', kind: 'needs', dst: '$sub' },
     ]);
-    expect((await core.openRoots()).map((n) => n.id)).toEqual([t.root]);
     const d = await core.nodeDetail(t.root!);
     expect(d.readiness).toEqual({ ready: false, waitingOn: [t.sub] });
   });
@@ -88,53 +87,31 @@ describe('graph', () => {
   });
 });
 
-describe('chat and cards', () => {
-  it('a chat is an assignment to the analyst; its reply closes it', async () => {
-    const chat = await core.chat('Plan the v2 prototype');
-    expect(chat).toMatchObject({ kind: 'assign', sender: USER_ID, recipient: ANALYST_ID, state: 'open', delivery: 'pending' });
-    const reply = await core.send(asAnalyst(chat.id), { kind: 'report', replyTo: chat.id, body: 'On it.' });
-    expect(reply).toMatchObject({ recipient: USER_ID, closes: true, delivery: 'none' });
-    expect((await s.getEvent(db, chat.id)).state).toBe('closed');
-    expect((await core.timeline()).map((e) => e.id)).toEqual([chat.id, reply.id]);
-  });
-
-  it('tasks linked in a chat as [Title](ariadne:id) are attached to it', async () => {
-    const t = await ids([
-      { op: 'create_node', ref: 'a', kind: 'task', title: 'Ship v2' },
-      { op: 'create_node', ref: 'p', kind: 'person', title: 'Bryan' },
-    ]);
-    const chat = await core.chat(`Status of [Ship v2](ariadne:${t.a}) and ask [Bryan](ariadne:${t.p}) (ariadne:00000000-0000-4000-8000-0000000000ff)?`);
-    expect(chat.tasks).toEqual([t.a]); // people stay links in the text; unknown ids are ignored
-  });
-
-  it('attached references are listed after the text and their tasks attached', async () => {
-    const t = await ids([
-      { op: 'create_node', ref: 'a', kind: 'task', title: 'Ship [v2]' },
-      { op: 'create_node', ref: 'p', kind: 'person', title: 'Bryan' },
-    ]);
-    const chat = await core.chat('Status?', null, [t.a!, t.p!, '00000000-0000-4000-8000-0000000000ff']);
-    expect(chat.body).toBe(`Status?\n\n[Ship v2](ariadne:${t.a}) [Bryan](ariadne:${t.p})`);
-    expect(chat.tasks).toEqual([t.a]);
-  });
+describe('events for you', () => {
+  const asYou = (because: string) => who(USER_ID, 'mcp', because);
 
   it('you assign only through the analyst', async () => {
     const a = await agent('Coder');
     await expect(core.send(asUser(), { kind: 'assign', recipient: a, body: 'x' })).rejects.toThrow(/through the Analyst/);
   });
 
-  it('a card is an assignment to you; pressing a button is your report to the analyst', async () => {
+  it('a card is an assignment to you, waiting for a session; your answer is your report to the analyst', async () => {
     const card = await core.send(asAnalyst(), {
       kind: 'assign',
       recipient: USER_ID,
       body: 'Which repo?',
       card: { kind: 'choice', title: 'Pick a repo', fields: [{ name: 'repo', label: 'Repo', type: 'select', options: [{ value: 'a', label: 'A' }] }], actions: [{ id: 'ok', label: 'Use it', style: 'primary' }] },
     });
-    await expect(core.respond(card.id, { action: 'nope' })).rejects.toThrow(/no action/);
-    const r = await core.respond(card.id, { action: 'ok', values: { repo: 'a' } });
-    expect(r).toMatchObject({ kind: 'report', sender: USER_ID, recipient: ANALYST_ID, closes: true, delivery: 'pending', response: { action: 'ok', values: { repo: 'a' } } });
-    expect(r.body).toBe('**Use it**\n- Repo: a');
+    expect(card.delivery).toBe('pending');
+    const r = await core.send(asYou(card.id), { kind: 'report', replyTo: card.id, body: 'Use it: A' });
+    expect(r).toMatchObject({ kind: 'report', sender: USER_ID, recipient: ANALYST_ID, closes: true, delivery: 'pending' });
     expect((await s.getEvent(db, card.id)).state).toBe('closed');
-    await expect(core.respond(card.id, { action: 'ok' })).rejects.toThrow(/already closed/);
+    await expect(core.send(asYou(card.id), { kind: 'report', replyTo: card.id, body: 'again' })).rejects.toThrow(/already closed/);
+  });
+
+  it('notes for you wait for a session too', async () => {
+    const fyi = await core.send(asAnalyst(), { kind: 'report', recipient: USER_ID, body: 'Build is green.' });
+    expect(fyi).toMatchObject({ recipient: USER_ID, replyTo: null, delivery: 'pending' });
   });
 
   it('cards go to you only', async () => {
@@ -150,12 +127,18 @@ describe('chat and cards', () => {
     const ask = await core.send(asAnalyst(), { kind: 'assign', recipient: t.bryan, body: 'Do roles nest?', tasks: [t.task!] });
     expect(ask.delivery).toBe('none');
     const [card] = await s.listEvents(db, { actor: USER_ID, open: true });
-    expect(card).toMatchObject({ sender: null, recipient: USER_ID, replyTo: ask.id, card: { kind: 'proxy', title: 'Ask Bryan' }, tasks: [t.task] });
+    expect(card).toMatchObject({ sender: null, recipient: USER_ID, replyTo: ask.id, card: { kind: 'proxy', title: 'Ask Bryan' }, tasks: [t.task], delivery: 'pending' });
 
-    await core.respond(card!.id, { action: 'done', values: { answer: 'No, flat roles.' } });
+    // Not reached yet: the proxy card and Bryan's assignment stay open.
+    await core.send(asYou(card!.id), { kind: 'report', replyTo: card!.id, closes: false, body: 'Out until Monday.' });
+    expect((await s.getEvent(db, ask.id)).state).toBe('open');
+    await core.send(asYou(card!.id), { kind: 'report', replyTo: card!.id, body: 'No, flat roles.' });
     expect((await s.getEvent(db, ask.id)).state).toBe('closed');
     const reports = await s.listEvents(db, { kind: 'report', actor: t.bryan });
-    expect(reports).toMatchObject([{ sender: t.bryan, recipient: ANALYST_ID, replyTo: ask.id, body: 'No, flat roles.', closes: true, delivery: 'pending' }]);
+    expect(reports).toMatchObject([
+      { sender: t.bryan, recipient: ANALYST_ID, replyTo: ask.id, body: 'Not reached yet: Out until Monday.', closes: false },
+      { sender: t.bryan, recipient: ANALYST_ID, replyTo: ask.id, body: 'No, flat roles.', closes: true, delivery: 'pending' },
+    ]);
   });
 });
 
@@ -207,8 +190,8 @@ describe('agents', () => {
 
   it('the analyst delivery includes your own UI changes since its last delivery', async () => {
     await ids([{ op: 'create_node', ref: 't', kind: 'task', title: 'Renamed by you' }]);
-    const chat = await core.chat('hi');
-    const d = await (await ContextBuilder.load(db)).delivery(chat);
+    const note = await core.send(who(null, 'core'), { kind: 'report', recipient: ANALYST_ID, body: 'hi' });
+    const d = await (await ContextBuilder.load(db)).delivery(note);
     expect(d.analyst!.userChanges).toContain('created task "Renamed by you"');
     expect(d.analyst!.openRoots).toMatchObject([{ title: 'Renamed by you' }]);
   });
@@ -232,8 +215,7 @@ describe('undo', () => {
       { op: 'create_node', ref: 'b', kind: 'task', title: 'B' },
       { op: 'create_edge', src: '$a', kind: 'needs', dst: '$b' },
     ]);
-    const chat = await core.chat('drop B', t.a);
-    const w = asAnalyst(chat.id);
+    const w = asAnalyst();
     await core.ops(w, [{ op: 'update_node', id: t.a!, title: 'A!' }, { op: 'delete_node', id: t.b! }]);
     expect((await core.graph()).edges.filter((e) => e.kind === 'needs')).toEqual([]);
     await core.undo(asUser(), w.changeset);
@@ -254,31 +236,6 @@ describe('undo', () => {
 });
 
 describe('System One', () => {
-  it('holds a chat for triage, then delivers it with the decisions', async () => {
-    const decider = await agent('Jev', { decider: true });
-    const t = await ids([{ op: 'create_node', ref: 'root', kind: 'task', title: 'Ship v2' }]);
-    const chat = await core.chat('the schema is done');
-    expect(chat.delivery).toBe('held');
-    // The decider gets a question event; answer it like a decider runner would.
-    let [q] = await s.listEvents(db, { actor: decider, kind: 'assign', open: true });
-    for (let i = 0; i < 50 && !q; i++) {
-      await new Promise((r) => setTimeout(r, 20));
-      [q] = await s.listEvents(db, { actor: decider, kind: 'assign', open: true });
-    }
-    expect(Object.keys(q!.questions!).sort()).toEqual(['about', 'intent']);
-    expect(q!.questions!.about).toMatchObject({ criteria: { task1: 'Is about "Ship v2"' } });
-    await core.receive({ type: 'report', sender: decider, replyTo: q!.id, body: '', answers: { intent: { type: 'choice', choice: 'update', confidence: 0.9 }, about: { type: 'choice', choice: 'task1', confidence: 0.8 } } });
-    let ev = await s.getEvent(db, chat.id);
-    for (let i = 0; i < 50 && ev.delivery === 'held'; i++) {
-      await new Promise((r) => setTimeout(r, 20));
-      ev = await s.getEvent(db, chat.id);
-    }
-    expect(ev.delivery).toBe('pending');
-    expect(ev.decisions).toEqual({ intent: { value: 'update', by: 'jev', confidence: 0.9 }, about: { value: t.root, by: 'jev', confidence: 0.8 } });
-    // Decider traffic stays out of your timeline.
-    expect((await core.timeline()).map((e) => e.id)).toEqual([chat.id]);
-  });
-
   it('falls back to defaults when no decider answers in time', async () => {
     await db.end();
     ({ db, core } = await freshCore({ decideTimeoutMs: 100 }));

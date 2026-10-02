@@ -1,27 +1,26 @@
 // Prompts built from a delivery: for headless runners, and the briefs claim_assignment returns. Pure functions, so they're easy to test and tune.
 import type { Delivery, TaskContext } from '../server/context';
+import type { Card } from '../shared/model';
 
 export const ANALYST_SYSTEM = `You are the Analyst inside Ariadne, the user's trusted external memory. The user has
 limited energy and working memory (ME/CFS): protect their attention.
 
-Your job, for each event you're woken with:
+You run in an interactive Claude Code session: the user is right here, so talk to them directly.
+
+Your job, for each event you handle:
 - Keep the graph true. Tasks are nodes; "A needs B" edges break work down and order it (a task nothing
   needs is a root, the user's goal). Attach repos, Jenkins builds, and docs with "uses"; people to
   coordinate with with "involves". Put things on the highest task they apply to: subtasks inherit them.
 - Delegate. Use "assign" to give work to your subordinates (see "subordinates" in the delivery) with
   the tasks it's about.
 - Conversations with people or teams: "assign" to that person or team, with the questions in the body.
-  It becomes an "Ask <name>" card the user carries, and the answer comes back to you as their report.
-  Don't write those questions into a chat reply instead.
+  It becomes an "Ask <name>" item the user carries, and the answer comes back to you as their report.
 - Review what comes back. Agents' reports may carry "proposals" (ops). Apply the sound ones with
   apply_ops; escalate the doubtful ones to the user with ask_user.
-- Bring the user only what needs them, with the minimum they need. Decisions and approvals are cards
-  (ask_user) with clear buttons. A card replaces a question in prose. Withdraw cards that stop mattering.
-- Answer the user's chats with "reply" (short markdown; close the chat when you've handled it). Use
-  closes=false for "on it" notes when work continues in the background.
+- Bring the user only what needs them, with the minimum they need. Ask them here. For a question or note
+  that should wait (not for now), leave it with ask_user / tell_user. Withdraw ones that stop mattering.
 - For quick classification (is this X or Y? how hard is this?), "decide" asks a System One model:
   fast and calibrated, but it cannot write text. Act on high confidence only.
-- Long work: set_status so the user sees what you're doing.
 - Always pass "because": <the event id you're handling> on changes.
 
 Never invent facts about people or systems. If something is unknown, ask or leave it out.
@@ -52,14 +51,33 @@ function taskMd(t: TaskContext): string {
 export function analystPrompt(d: Delivery): string {
   const e = d.event;
   const what =
-    e.kind === 'assign' && e.from.endsWith('(the user)')
-      ? `The user wrote to you (event ${e.id}). Handle it and reply.`
-      : e.kind === 'report' && e.from.endsWith('(the user)')
+    e.kind === 'report' && e.from.endsWith('(the user)')
         ? `The user answered your card (event ${e.id}, replying to ${e.replyTo}). Act on the answer.`
         : e.kind === 'report'
           ? `${e.from} reported (event ${e.id}, replying to ${e.replyTo ?? 'nothing'}). Review it (your onReview brief), apply or escalate its proposals, and tell the user only if it matters to them.`
           : `${e.from} sent you an assignment (event ${e.id}). Handle it.`;
   return `${what}\n\nThe delivery:\n\n\`\`\`json\n${JSON.stringify(d, null, 1)}\n\`\`\`\n`;
+}
+
+/** For a session that claimed an event for the user: ask or tell them, then record it. */
+export function userPrompt(d: Delivery, card: Card | null): string {
+  const e = d.event;
+  const tasks = d.tasks.length ? `\n\nTasks: ${d.tasks.map((t) => `${t.title} (${t.id})`).join('; ')}` : '';
+  const from = e.from;
+  if (e.kind === 'report') {
+    return `Notify the user of this note from ${from} (event ${e.id}). It needs no answer.\n\n${e.body}${tasks}\n\nThen call submit_result with eventId "${e.id}" and status "done".`;
+  }
+  const fields = card?.fields.length ? `\n\nWhat to find out:\n${card.fields.map((f) => `- ${f.label || f.name}${f.options?.length ? ` (${f.options.map((o) => o.label).join(' / ')})` : ''}`).join('\n')}` : '';
+  const actions = card?.actions.length ? `\n\nTheir options: ${card.actions.map((a) => a.label).join(' / ')}` : '';
+  const proxy =
+    card?.kind === 'proxy'
+      ? `The user carries this to someone outside Ariadne: ${card.title}. Ask the user what they said.`
+      : `Ask the user: ${card?.title ?? 'this assignment'}.`;
+  return `${proxy} (event ${e.id}, from ${from})\n\n${e.body}${e.instructions ? `\n\n${e.instructions}` : ''}${fields}${actions}${tasks}
+
+## When you have the answer
+
+Call submit_result with eventId "${e.id}" and the user's answer as body: status "done" when it's answered${card?.kind === 'proxy' ? '' : ' (start with the option they chose)'}, or "question"/"blocked" if they can't answer yet (it stays open). Don't act on the answer yourself here: it goes back to ${from} as the user's report.`;
 }
 
 /** For other agents: everything in plain markdown. They have no Ariadne tools. */

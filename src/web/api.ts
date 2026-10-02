@@ -6,17 +6,6 @@ export interface GraphData {
   edges: Edge[];
   assignments: { eventId: string; recipient: string; tasks: string[] }[];
 }
-export interface StatusLine {
-  actor: string;
-  text: string;
-  eventId?: string;
-  at: string;
-}
-export interface Timeline {
-  events: Event[];
-  changes: Record<string, { lines: string[]; undone: boolean; count: number }>;
-  statuses: StatusLine[];
-}
 export interface NodeDetail {
   node: Node;
   edges: Edge[];
@@ -41,17 +30,12 @@ async function call<T>(method: 'GET' | 'POST', path: string, body?: unknown): Pr
 export const api = {
   graph: () => call<GraphData>('GET', '/api/graph'),
   node: (id: string) => call<NodeDetail>('GET', `/api/nodes/${id}`),
-  timeline: (focus: string | null, all: boolean) => call<Timeline>('GET', `/api/timeline?${new URLSearchParams({ ...(focus ? { focus } : {}), ...(all ? { all: '1' } : {}) })}`),
   ops: (ops: Op[]) => call<{ results: { op: string; id: string; ref?: string }[] }>('POST', '/api/ops', { ops }),
-  chat: (text: string, focus: string | null, refs: string[]) => call<Event>('POST', '/api/chat', { text, focus, refs }),
-  respond: (id: string, action: string, values: Record<string, unknown>) => call<Event>('POST', `/api/cards/${id}/respond`, { action, values }),
-  undo: (because: string) => call<{ undone: number }>('POST', '/api/undo', { because }),
 };
 
-/** Live updates over SSE: `version` bumps whenever data changes; `statuses` are the status lines. */
-export function useLive(): { version: number; statuses: StatusLine[]; connected: boolean } {
+/** Live updates over SSE: `version` bumps whenever data changes. */
+export function useLive(): { version: number; connected: boolean } {
   const [version, setVersion] = useState(0);
-  const [statuses, setStatuses] = useState<StatusLine[]>([]);
   const [connected, setConnected] = useState(false);
   useEffect(() => {
     const es = new EventSource('/api/stream');
@@ -64,23 +48,18 @@ export function useLive(): { version: number; statuses: StatusLine[]; connected:
         setVersion((v) => v + 1);
       }, 120);
     };
-    es.addEventListener('hello', (e) => {
+    es.addEventListener('hello', () => {
       setConnected(true);
-      setStatuses((JSON.parse((e as MessageEvent).data) as { statuses: StatusLine[] }).statuses);
       bump();
     });
     es.addEventListener('changed', bump);
-    es.addEventListener('status', (e) => {
-      const s = JSON.parse((e as MessageEvent).data) as StatusLine;
-      setStatuses((list) => [...list.filter((x) => x.actor !== s.actor), ...(s.text ? [s] : [])]);
-    });
     es.onerror = () => setConnected(false);
     return () => {
       es.close();
       if (timer) clearTimeout(timer);
     };
   }, []);
-  return { version, statuses, connected };
+  return { version, connected };
 }
 
 /** localStorage that never throws (private windows, blocked storage). */

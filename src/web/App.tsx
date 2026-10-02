@@ -1,10 +1,9 @@
-import { MessagesSquare, Network, Crosshair, X } from 'lucide-react';
+import { Crosshair, X } from 'lucide-react';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import type { Node } from '../shared/model';
 import { api, type GraphData, remember, useLive } from './api';
 import { GraphView } from './Graph';
 import { NodePicker } from './NodePicker';
-import { TimelineView } from './Timeline';
 
 interface AppState {
   graph: GraphData;
@@ -12,31 +11,21 @@ interface AppState {
   version: number;
   focus: string | null;
   setFocus(id: string | null): void;
-  /** Open a node in the graph view. */
+  /** Select a node in the graph view. */
   show(id: string): void;
   name(id: string | null | undefined): string;
   reload(): void;
-  /** Attach this node to the next chat message (and go to the chat). */
-  reference(id: string): void;
-  /** Nodes attached to the message being written. */
-  refs: string[];
-  unreference(id: string): void;
-  clearRefs(): void;
 }
 
 const Ctx = createContext<AppState | null>(null);
 export const useApp = () => useContext(Ctx)!;
 
-type Tab = 'timeline' | 'graph';
-
 export function App() {
   const live = useLive();
   const [graph, setGraph] = useState<GraphData>({ nodes: [], edges: [], assignments: [] });
-  const [tab, setTab] = useState<Tab>(() => (remember.get('tab') as Tab) ?? 'timeline');
   const [focus, setFocusState] = useState<string | null>(() => remember.get('focus'));
   const [selected, setSelected] = useState<string | null>(null);
   const [kick, setKick] = useState(0);
-  const [refs, setRefs] = useState<string[]>([]);
 
   useEffect(() => {
     api.graph().then(setGraph, () => {});
@@ -47,29 +36,15 @@ export function App() {
     setFocusState(id);
     remember.set('focus', id);
   }, []);
-  const go = (t: Tab) => {
-    setTab(t);
-    remember.set('tab', t);
-  };
   const state: AppState = {
     graph,
     byId,
     version: live.version + kick,
     focus: focus && (byId.has(focus) || !graph.nodes.length) ? focus : null,
     setFocus,
-    show: (id) => {
-      setSelected(id);
-      go('graph');
-    },
+    show: setSelected,
     name: (id) => (id ? (byId.get(id)?.title ?? '(deleted)') : 'Ariadne'),
     reload: () => setKick((k) => k + 1),
-    reference: (id) => {
-      setRefs((r) => (r.includes(id) ? r : [...r, id]));
-      go('timeline');
-    },
-    refs: refs.filter((id) => byId.has(id)),
-    unreference: (id) => setRefs((r) => r.filter((x) => x !== id)),
-    clearRefs: () => setRefs([]),
   };
   const focusNode = state.focus ? byId.get(state.focus) : undefined;
 
@@ -78,14 +53,6 @@ export function App() {
       <div className="app">
         <header className="topbar">
           <span className="brand">Ariadne</span>
-          <nav className="tabs" aria-label="Views">
-            <button className={tab === 'timeline' ? 'tab active' : 'tab'} onClick={() => go('timeline')}>
-              <MessagesSquare size={16} /> Timeline
-            </button>
-            <button className={tab === 'graph' ? 'tab active' : 'tab'} onClick={() => go('graph')}>
-              <Network size={16} /> Graph
-            </button>
-          </nav>
           <div className="focus">
             <Crosshair size={16} aria-hidden />
             {focusNode ? (
@@ -102,7 +69,7 @@ export function App() {
           <span className={live.connected ? 'live on' : 'live'} title={live.connected ? 'Live' : 'Reconnecting…'} />
         </header>
         <main className="main">
-          {tab === 'timeline' ? <TimelineView statuses={live.statuses} /> : <GraphView selected={selected} onSelect={setSelected} />}
+          <GraphView selected={selected} onSelect={setSelected} />
         </main>
       </div>
     </Ctx.Provider>

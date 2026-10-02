@@ -1,4 +1,5 @@
-// The claim loop for interactive Claude Code sessions (the Analyst, and agents marked interactive).
+// The claim loop for interactive Claude Code sessions (the Analyst, agents marked interactive, and
+// events for you: the session asks or tells you, then records your answer).
 // These tools are part of /mcp (see mcp.ts).
 //
 //   "Handle the next ariadne assignment" → list_assignments → claim_assignment → work → submit_result.
@@ -8,7 +9,7 @@
 // ('delivered'); release_assignment, or the timer running out, puts it back ('pending').
 // Ariadne doesn't track who claimed: any session may report on any item (MCP is asynchronous).
 import { z } from 'zod';
-import { ANALYST_SYSTEM, analystPrompt, interactivePrompt } from '../runner/prompts';
+import { ANALYST_SYSTEM, analystPrompt, interactivePrompt, userPrompt } from '../runner/prompts';
 import { ANALYST_ID, type Event, Op, USER_ID } from '../shared/model';
 import { ContextBuilder } from './context';
 import { claimKey } from './core';
@@ -21,9 +22,9 @@ list_assignments and pick the FIRST item you have the capability to handle here 
 knowledge). claim_assignment it; if the claim fails, take the next one. Follow the brief it returns, then
 submit_result. On long work, call still_working before the claim times out.`;
 
-/** Items waiting for an interactive session: pending, for an unpaused interactive agent, not finished. */
-const AVAILABLE = `e.delivery = 'pending' AND (e.kind = 'report' OR e.state = 'open') AND n.kind = 'agent'
-  AND coalesce((n.attrs->>'interactive')::boolean, false) AND NOT coalesce((n.attrs->>'paused')::boolean, false)`;
+/** Items waiting for an interactive session: pending, not finished, for you or an unpaused interactive agent. */
+const AVAILABLE = `e.delivery = 'pending' AND (e.kind = 'report' OR e.state = 'open') AND (n.id = $1 OR (n.kind = 'agent'
+  AND coalesce((n.attrs->>'interactive')::boolean, false) AND NOT coalesce((n.attrs->>'paused')::boolean, false)))`;
 
 /** The event, or an error if it's missing or already completed (an assignment no longer open, a report already handled). */
 async function unfinished(q: s.Q, eventId: string): Promise<Event> {
@@ -34,19 +35,19 @@ async function unfinished(q: s.Q, eventId: string): Promise<Event> {
 }
 
 const finish = (ev: Event) =>
-  `\n\n## When you're done\n\nCall submit_result with eventId "${ev.id}" and status "done"${ev.kind === 'assign' ? ' and a body that leads with the outcome (a reply that closes it also completes it)' : ''}. Your claim times out after a while without a word: on long work call still_working.`;
+  `\n\n## When you're done\n\nCall submit_result with eventId "${ev.id}" and status "done"${ev.kind === 'assign' ? ' and a body that leads with the outcome' : ''}. Your claim times out after a while without a word: on long work call still_working.`;
 
 export const WORK_TOOLS: Tool[] = [
   {
     name: 'list_assignments',
     description:
-      'What is waiting for an interactive session: your messages first, then oldest. Each item shows who it is for, a summary, its tasks, and the repos they use. Pick the first one you have the capability to handle here and claim_assignment it. Listing claims nothing.',
+      'What is waiting for an interactive session: things for the user first (ask or tell them), then from the user, then oldest. Each item shows who it is for, a summary, its tasks, and the repos they use. Pick the first one you have the capability to handle here and claim_assignment it. Listing claims nothing.',
     input: z.object({}),
     readOnly: true,
     run: async (core) => {
       const r = await core.db.query(
         `SELECT e.id FROM events e JOIN nodes n ON n.id = e.recipient WHERE ${AVAILABLE}
-         ORDER BY (e.sender IS NOT DISTINCT FROM $1) DESC, e.created_at LIMIT 30`,
+         ORDER BY (e.recipient = $1) DESC, (e.sender IS NOT DISTINCT FROM $1) DESC, e.created_at LIMIT 30`,
         [USER_ID],
       );
       const ctx = await ContextBuilder.load(core.db);
@@ -78,18 +79,19 @@ export const WORK_TOOLS: Tool[] = [
       const { ev, delivery: d } = await core.run(who(null, 'core', a.eventId), async (c) => {
         const ev = await unfinished(c.tx, a.eventId);
         const to = ev.recipient ? await s.findNode(c.tx, ev.recipient) : null;
-        if (!to?.attrs.interactive) throw new s.Invalid('That event is not for an interactive session');
+        if (to?.id !== USER_ID && !to?.attrs.interactive) throw new s.Invalid('That event is not for an interactive session');
         if (ev.delivery === 'claimed') throw new s.Invalid('Already claimed: take the next one');
         // Built before claiming, so the Analyst's "userChanges" cover everything since its last claim.
         const delivery = await (await ContextBuilder.load(c.tx)).delivery(ev);
         if (!(await core.claimTx(c, ev.id))) throw new s.Invalid('Not available to claim (it was delivered another way)');
         return { ev, delivery };
       });
-      core.hub.status({ actor: ev.recipient!, text: 'Working in Claude Code…', eventId: ev.id });
+      if (ev.recipient !== USER_ID) core.hub.status({ actor: ev.recipient!, text: 'Working in Claude Code…', eventId: ev.id });
       return {
         eventId: ev.id,
         timeoutMinutes: core.claimTimeoutMinutes,
-        brief: ev.recipient === ANALYST_ID ? `${ANALYST_SYSTEM}\n\n${analystPrompt(d)}${finish(ev)}` : interactivePrompt(d),
+        brief:
+          ev.recipient === USER_ID ? userPrompt(d, ev.card) : ev.recipient === ANALYST_ID ? `${ANALYST_SYSTEM}\n\n${analystPrompt(d)}${finish(ev)}` : interactivePrompt(d),
       };
     },
   },

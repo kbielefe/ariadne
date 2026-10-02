@@ -44,7 +44,7 @@ export function GraphView({ selected, onSelect }: { selected: string | null; onS
     }
   });
   const [dragging, setDragging] = useState(false);
-  // Selecting something (here, or from a chip in the chat) brings the details back.
+  // Selecting something (here, or from a node chip) brings the details back.
   useEffect(() => {
     if (selected) setPanes((x) => (x.details ? x : { ...x, details: true }));
   }, [selected]);
@@ -87,7 +87,7 @@ export function GraphView({ selected, onSelect }: { selected: string | null; onS
     }
     for (const e of edges) if (ids.has(e.src) && ids.has(e.dst)) els.push({ group: 'edges', data: { id: e.id, source: e.src, target: e.dst, label: e.kind === 'needs' ? '' : EDGE_RULES[e.kind].label }, classes: e.kind });
     if (f.showAssigned)
-      for (const a of graph.assignments.filter((x) => x.recipient !== USER_ID)) // your cards live in the timeline
+      for (const a of graph.assignments.filter((x) => x.recipient !== USER_ID)) // items for you are handled in Claude Code
         for (const t of a.tasks)
           if (ids.has(t) && ids.has(a.recipient)) els.push({ group: 'edges', data: { id: `as:${a.eventId}:${t}`, source: t, target: a.recipient, label: 'assigned' }, classes: 'assigned' });
     return els;

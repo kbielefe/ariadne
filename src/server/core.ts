@@ -1,18 +1,18 @@
 // The application core: every change goes through here, in one transaction, then the hub is told.
 //
 // Event rules (docs/DESIGN.md §3):
-//   - An assignment goes to an actor. Agents get it over RabbitMQ; you get it in the timeline;
-//     other people and teams become a proxy card for you ("Ask Bryan about ...").
+//   - An assignment goes to an actor. Agents get it over RabbitMQ; events for you wait for a
+//     Claude Code session to claim them and ask or tell you; other people and teams become a proxy
+//     card for you ("Ask Bryan about ...").
 //   - A report replies to an assignment, from whoever it was assigned to, back to whoever assigned it.
 //     `closes` finishes the assignment.
-//   - Cards are assignments to you; pressing a button is your report.
-import { readiness, reachable } from '../shared/graph';
+//   - Cards are assignments to you; your answer (submit_result from the session) is your report.
+import { readiness } from '../shared/graph';
 import {
   ANALYST_ID,
   type Answer,
   Card,
   type CardInput,
-  CardResponse,
   type Decision,
   type Edge,
   type Event,
@@ -44,9 +44,6 @@ export interface SendInput {
   dueAt?: string | null;
   tasks?: string[];
 }
-
-/** Decisions Ariadne makes before delivering an event, by asking a System One decider. */
-type HoldUse = 'triage' | 'dispatch';
 
 export interface CoreOptions {
   /** How long decide() waits for a decider. */
@@ -93,7 +90,7 @@ interface After {
   changed: boolean;
   deliver: boolean;
   answered: string[];
-  holds: { eventId: string; use: HoldUse }[];
+  holds: string[];
   clearStatus: string[];
 }
 
@@ -122,7 +119,7 @@ export class Core {
     if (after.deliver) this.hub.deliver();
     for (const a of after.clearStatus) this.hub.clearStatus(a);
     for (const id of after.answered) this.hub.answered(id);
-    for (const h of after.holds) void this.resolveHold(h.eventId, h.use);
+    for (const id of after.holds) void this.resolveHold(id);
     return result;
   }
 
@@ -137,36 +134,6 @@ export class Core {
   }
 
   // ============================================================== events
-
-  /** You type in the chat: an assignment to the analyst, about the focus task if there is one. */
-  async chat(text: string, focus?: string | null, refs: string[] = []): Promise<Event> {
-    if (!text.trim()) throw new Invalid('Say something');
-    return this.run(who(USER_ID, 'ui'), async (c, after) => {
-      // Nodes you attached (or linked inline as [Title](ariadne:<id>)) travel with the message: tasks are
-      // attached so the Analyst gets their context, and every one is listed at the end of the text.
-      const inline = [...text.matchAll(/\(ariadne:([0-9a-f-]{36})\)/g)].map((m) => m[1]!);
-      const wanted = [...new Set([...refs, ...inline])];
-      const nodes = wanted.length ? (await c.tx.query('SELECT * FROM nodes WHERE id = ANY($1::uuid[])', [wanted])).rows.map(s.mapNode) : [];
-      const tasks = [...new Set([...(focus ? [focus] : []), ...nodes.filter((n) => n.kind === 'task').map((n) => n.id)])];
-      const attached = nodes.filter((n) => refs.includes(n.id));
-      const body = attached.length ? `${text.trimEnd()}\n\n${attached.map((n) => `[${n.title.replace(/[[\]]/g, '')}](ariadne:${n.id})`).join(' ')}` : text;
-      return this.sendTx(c, after, USER_ID, { kind: 'assign', recipient: ANALYST_ID, body, tasks }, ['triage']);
-    });
-  }
-
-  /** You press a button on a card. */
-  async respond(cardEventId: string, response: unknown): Promise<Event> {
-    const r = CardResponse.parse(response);
-    return this.run(who(USER_ID, 'ui', cardEventId), async (c, after) => {
-      const card = await s.getEvent(c.tx, cardEventId);
-      if (!card.card) throw new Invalid('That event is not a card');
-      if (!card.card.actions.some((a) => a.id === r.action)) throw new Invalid(`The card has no action "${r.action}"`);
-      const label = card.card.actions.find((a) => a.id === r.action)!.label;
-      const values = Object.entries(r.values).filter(([, v]) => v !== '' && v != null && !(Array.isArray(v) && !v.length));
-      const body = [`**${label}**`, ...values.map(([k, v]) => `- ${card.card!.fields.find((f) => f.name === k)?.label ?? k}: ${Array.isArray(v) ? v.join(', ') : String(v)}`)].join('\n');
-      return this.sendTx(c, after, USER_ID, { kind: 'report', replyTo: cardEventId, closes: true, response: r, body });
-    });
-  }
 
   /** The analyst (MCP) or Ariadne sends an event. */
   send(w: Who, input: SendInput): Promise<Event> {
@@ -197,7 +164,7 @@ export class Core {
     });
   }
 
-  async sendTx(c: Ctx, after: After, sender: string | null, input: SendInput, holdUses: HoldUse[] = []): Promise<Event> {
+  async sendTx(c: Ctx, after: After, sender: string | null, input: SendInput): Promise<Event> {
     const senderNode = sender ? await s.getNode(c.tx, sender) : null;
     let tasks = input.tasks ?? [];
     for (const t of tasks) if ((await s.getNode(c.tx, t)).kind !== 'task') throw new Invalid(`${t} is not a task`);
@@ -215,11 +182,11 @@ export class Core {
       if (questions && !to.attrs.decider) throw new Invalid('Questions go to a decider agent');
       const proxy = to.kind !== 'agent' && to.id !== USER_ID;
 
-      const holds: HoldUse[] = holdUses.filter((u) => u === 'triage');
       // Interactive agents run in a session someone already started: there is no model or effort to pick.
-      if (to.kind === 'agent' && !to.attrs.decider && !to.attrs.interactive && !(input.decisions?.model && input.decisions?.effort)) holds.push('dispatch');
-      const decider = holds.length ? await this.findDecider(c.tx) : null;
-      const delivery: Event['delivery'] = to.kind !== 'agent' ? 'none' : decider ? 'held' : 'pending';
+      const hold = to.kind === 'agent' && !to.attrs.decider && !to.attrs.interactive && !(input.decisions?.model && input.decisions?.effort);
+      const decider = hold ? await this.findDecider(c.tx) : null;
+      // Events for you wait for a Claude Code session to claim them (workmcp.ts).
+      const delivery: Event['delivery'] = to.id === USER_ID ? 'pending' : to.kind !== 'agent' ? 'none' : decider ? 'held' : 'pending';
       const decisions = { ...input.decisions };
       if (to.kind === 'agent' && !decider) Object.assign(decisions, defaultDispatch(to, decisions));
 
@@ -237,7 +204,7 @@ export class Core {
         tasks,
       });
       if (delivery === 'pending') after.deliver = true;
-      if (delivery === 'held') for (const use of holds) after.holds.push({ eventId: ev.id, use });
+      if (delivery === 'held') after.holds.push(ev.id);
       if (proxy) await this.proxyCard(c, ev, to);
       return ev;
     }
@@ -265,7 +232,7 @@ export class Core {
       proposals: input.proposals ?? null,
       answers: input.answers ?? null,
       // Decider answers are collected by decide(); they never wake anyone.
-      delivery: to?.kind === 'agent' && !to.attrs.decider && !senderNode?.attrs.decider ? 'pending' : 'none',
+      delivery: to?.id === USER_ID || (to?.kind === 'agent' && !to.attrs.decider && !senderNode?.attrs.decider) ? 'pending' : 'none',
       tasks,
     });
     if (ev.delivery === 'pending') after.deliver = true;
@@ -278,15 +245,13 @@ export class Core {
     // A proxy card answered: the proxied person or team reports back to whoever assigned them.
     if (original?.card?.kind === 'proxy' && original.replyTo) {
       const proxied = await s.getEvent(c.tx, original.replyTo);
-      const r = input.response as CardResponse | null;
-      if (proxied.state === 'open' && proxied.recipient && r) {
-        const answer = typeof r.values.answer === 'string' ? r.values.answer : '';
-        const done = r.action === 'done';
+      if (proxied.state === 'open' && proxied.recipient) {
+        const answer = ev.body.trim();
         await this.sendTx(c, after, proxied.recipient, {
           kind: 'report',
           replyTo: proxied.id,
-          closes: done,
-          body: done ? answer || '(done, no details)' : `Not reached yet${answer ? `: ${answer}` : ''}`,
+          closes: ev.closes,
+          body: ev.closes ? answer || '(done, no details)' : `Not reached yet${answer ? `: ${answer}` : ''}`,
         });
       }
     }
@@ -323,7 +288,7 @@ export class Core {
           { id: 'not_reached', label: 'Not reached yet' },
         ],
       }),
-      delivery: 'none',
+      delivery: 'pending',
       tasks: ev.tasks,
     });
   }
@@ -363,13 +328,11 @@ export class Core {
   }
 
   /** Makes the decisions an event waits on, then releases it for delivery. Never fails the event. */
-  async resolveHold(eventId: string, use: HoldUse): Promise<void> {
+  async resolveHold(eventId: string): Promise<void> {
     try {
       const ev = await s.getEvent(this.db, eventId);
       if (ev.delivery !== 'held') return;
-      const decisions: Record<string, Decision> = {};
-      if (use === 'triage') Object.assign(decisions, await this.triage(ev));
-      else Object.assign(decisions, await this.dispatch(ev));
+      const decisions = await this.dispatch(ev);
       await this.run(who(null, 'core', eventId), async (c, after) => {
         const cur = await s.getEvent(c.tx, eventId);
         await s.patchEvent(c, eventId, { decisions: { ...decisions, ...cur.decisions }, delivery: cur.delivery === 'held' ? 'pending' : cur.delivery });
@@ -395,45 +358,6 @@ export class Core {
     });
   }
 
-  /** Chat triage: what kind of message is this, and what is it about? Hints for the analyst, shown to you. */
-  private async triage(ev: Event): Promise<Record<string, Decision>> {
-    const openCards = await s.listEvents(this.db, { actor: USER_ID, open: true, kind: 'assign', limit: 10 });
-    const roots = await this.openRoots(8);
-    const about: Record<string, string> = { none: 'Nothing listed here' };
-    const keys = new Map<string, string>();
-    openCards.forEach((e, i) => {
-      if (!e.card) return;
-      about[`card${i + 1}`] = `Answers the open card "${e.card.title}"`;
-      keys.set(`card${i + 1}`, e.id);
-    });
-    roots.forEach((t, i) => {
-      about[`task${i + 1}`] = `Is about "${t.title}"`;
-      keys.set(`task${i + 1}`, t.id);
-    });
-    const res = await this.decide(null, `The user wrote to their analyst:\n\n${ev.body}`, {
-      intent: {
-        type: 'choice',
-        instructions: 'What is the user doing with this message?',
-        criteria: {
-          new_work: 'Asks for something new to be done',
-          answer: 'Answers or responds to something they were asked',
-          question: 'Asks about the state of existing work',
-          update: 'Tells about progress or a change on existing work',
-          other: 'None of these',
-        },
-      },
-      about: { type: 'choice', instructions: 'Which of these is the message about?', criteria: about },
-    });
-    if (!res) return {};
-    const out: Record<string, Decision> = {};
-    const intent = res.answers.intent;
-    if (intent?.choice) out.intent = { value: intent.choice, by: 'jev', ...(intent.confidence != null ? { confidence: intent.confidence } : {}) };
-    const a = res.answers.about;
-    if (a?.choice && a.choice !== 'none' && keys.has(a.choice))
-      out.about = { value: keys.get(a.choice), by: 'jev', ...(a.confidence != null ? { confidence: a.confidence } : {}) };
-    return out;
-  }
-
   /** Model and effort for an agent assignment, from one difficulty score. */
   private async dispatch(ev: Event): Promise<Record<string, Decision>> {
     const to = await s.getNode(this.db, ev.recipient!);
@@ -454,16 +378,6 @@ export class Core {
 
   // ============================================================== reads
 
-  async openRoots(limit = 50): Promise<Node[]> {
-    const r = await this.db.query(
-      `SELECT n.* FROM nodes n WHERE n.kind = 'task' AND n.status = 'open'
-         AND NOT EXISTS (SELECT 1 FROM edges e WHERE e.kind = 'needs' AND e.dst = n.id)
-       ORDER BY n.updated_at DESC LIMIT $1`,
-      [limit],
-    );
-    return r.rows.map(s.mapNode);
-  }
-
   async graph(): Promise<{ nodes: Node[]; edges: Edge[]; assignments: { eventId: string; recipient: string; tasks: string[] }[] }> {
     const [nodes, edges, open] = await Promise.all([
       s.listNodes(this.db, { limit: 5000 }),
@@ -482,16 +396,6 @@ export class Core {
     const byId = new Map([node, ...others].map((n) => [n.id, n]));
     const events = node.kind === 'task' ? await s.listEvents(this.db, { task: id, limit: 100 }) : await s.listEvents(this.db, { actor: id, limit: 100 });
     return { node, edges, neighbors: others, events, ...(node.kind === 'task' ? { readiness: readiness(node, all, byId) } : {}) };
-  }
-
-  /** Events to and from you, newest last. With a focus task, only events about it or what it needs. */
-  async timeline(o: { focus?: string | null; all?: boolean; limit?: number } = {}): Promise<Event[]> {
-    let tasks: string[] | undefined;
-    if (o.focus) tasks = [...reachable(await s.listEdges(this.db), o.focus, { kinds: ['needs'] }).keys()];
-    const events = await s.listEvents(this.db, { ...(o.all ? {} : { actor: USER_ID }), ...(tasks ? { tasks } : {}), limit: o.limit ?? 200 });
-    // Decider traffic is plumbing; it shows up as decisions on the events it decided.
-    const deciders = new Set((await s.listNodes(this.db, { kind: 'agent' })).filter((n) => n.attrs.decider).map((n) => n.id));
-    return events.filter((e) => !(e.recipient && deciders.has(e.recipient)) && !(e.sender && deciders.has(e.sender)));
   }
 
   // ============================================================== timers
@@ -545,6 +449,8 @@ export class Core {
         if (!ev || ev.delivery !== 'claimed') return;
         await c.tx.query(`UPDATE events SET delivery = 'pending', delivered_at = NULL WHERE id = $1`, [eventId]);
         if (ev.recipient) after.clearStatus.push(ev.recipient);
+        // Something for you is back in the list already: no notice about the notice.
+        if (ev.recipient === USER_ID) return;
         const name = ev.recipient ? ((await s.findNode(c.tx, ev.recipient))?.title ?? 'An interactive session') : 'An interactive session';
         await this.sendTx(c, after, null, {
           kind: 'report',

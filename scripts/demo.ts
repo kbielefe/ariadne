@@ -1,16 +1,10 @@
-// Seeds a small demo into a running Ariadne: you chat, a scripted "analyst" answers over MCP.
+// Seeds a small demo into a running Ariadne: a scripted "analyst" builds it over MCP.
 //   ARIADNE_URL=http://127.0.0.1:3100 pnpm tsx scripts/demo.ts
-// Uses the real API and MCP, so it doubles as a smoke test. Don't run it against real data.
+// Uses the real MCP, so it doubles as a smoke test. Don't run it against real data.
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
 const base = process.env.ARIADNE_URL ?? 'http://127.0.0.1:3100';
-
-const post = async (path: string, body: unknown) => {
-  const r = await fetch(`${base}${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
-  if (!r.ok) throw new Error(`${path}: ${await r.text()}`);
-  return r.json() as Promise<{ id: string }>;
-};
 
 const client = new Client({ name: 'demo-analyst', version: '0' });
 await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`)));
@@ -20,9 +14,7 @@ async function call<T = Record<string, unknown>>(name: string, args: Record<stri
   return r.structuredContent as T;
 }
 
-const chat = await post('/api/chat', { text: 'I need to ship the **SSO** integration for the agent framework by end of month. Bryan owns RBAC.' });
 const { results } = await call<{ results: { ref?: string; id: string }[] }>('apply_ops', {
-  because: chat.id,
   ops: [
     { op: 'create_node', ref: 'root', kind: 'task', title: 'Ship SSO for the agent framework', body: 'Done = agents can call Mosaic APIs on behalf of a signed-in user.', attrs: { guidance: 'Keep PRs small. Follow the paved-road auth patterns.' } },
     { op: 'create_node', ref: 'oidc', kind: 'task', title: 'Pick an OIDC library' },
@@ -49,15 +41,14 @@ const { results } = await call<{ results: { ref?: string; id: string }[] }>('app
 });
 const id = (ref: string) => results.find((r) => r.ref === ref)!.id;
 
-await call('reply', { replyTo: chat.id, closes: true, tasks: [id('root')], body: 'I broke it into 4 tasks. **Pick an OIDC library** is ready now; token exchange waits on it and on the RBAC claims.' });
-await call('assign', { because: chat.id, to: id('coder'), tasks: [id('oidc')], body: 'Compare 2–3 OIDC client libraries for Node 24 and recommend one.', dueInMinutes: 120 });
-await call('assign', { because: chat.id, to: id('bryan'), tasks: [id('rbac')], body: 'Which claims should agents carry for RBAC? Roles only, or roles + tenant?' });
+const note = await call<{ id: string }>('tell_user', { tasks: [id('root')], body: 'I broke SSO into 4 tasks. **Pick an OIDC library** is ready now; token exchange waits on it and on the RBAC claims.' });
+await call('assign', { because: note.id, to: id('coder'), tasks: [id('oidc')], body: 'Compare 2–3 OIDC client libraries for Node 24 and recommend one.', dueInMinutes: 120 });
+await call('assign', { because: note.id, to: id('bryan'), tasks: [id('rbac')], body: 'Which claims should agents carry for RBAC? Roles only, or roles + tenant?' });
 await call('ask_user', {
-  because: chat.id,
+  because: note.id,
   tasks: [id('root')],
   body: 'Docs can wait until token exchange works, or start now from the design.',
   card: { kind: 'choice', title: 'When should the how-to start?', fields: [{ name: 'why', label: 'Anything I should know?', type: 'text' }], actions: [{ id: 'now', label: 'Start now', style: 'primary' }, { id: 'later', label: 'After token exchange' }] },
 });
-await call('set_status', { text: 'Waiting on Coder (OIDC comparison)' });
-console.log(`Demo seeded. Open ${base}`);
+console.log(`Demo seeded. Open ${base}, or ask Claude Code to handle the next ariadne assignment.`);
 await client.close();
