@@ -43,6 +43,8 @@ export interface SendInput {
   decisions?: Record<string, Decision>;
   dueAt?: string | null;
   tasks?: string[];
+  /** A progress report: an FYI, recorded on the thread but queued for no one (delivery none). */
+  progress?: boolean;
 }
 
 export interface CoreOptions {
@@ -235,8 +237,9 @@ export class Core {
       response: input.response ?? null,
       proposals: input.proposals ?? null,
       answers: input.answers ?? null,
-      // Decider answers are collected by decide(); they never wake anyone.
-      delivery: to?.id === USER_ID || (to?.kind === 'agent' && !to.attrs.decider && !senderNode?.attrs.decider) ? 'pending' : 'none',
+      decisions: input.decisions ?? {},
+      // Decider answers are collected by decide(); they never wake anyone. Nor does progress: it's an FYI.
+      delivery: !input.progress && (to?.id === USER_ID || (to?.kind === 'agent' && !to.attrs.decider && !senderNode?.attrs.decider)) ? 'pending' : 'none',
       tasks,
     });
     if (ev.delivery === 'pending') after.deliver = true;
@@ -461,6 +464,8 @@ export class Core {
           recipient: USER_ID,
           body: `Released a stuck claim: ${name} claimed this and hasn't checked in for ${t.payload.minutes ?? this.claimTimeoutMinutes} minutes. It's back in the queue.\n\n> ${ev.body.split('\n')[0]}`,
           tasks: ev.tasks,
+          // So a re-claim or a result can withdraw the notice (closeReleaseNoticesTx).
+          decisions: { releasedClaim: { value: eventId, by: 'core' } },
         });
       });
       return;
@@ -486,7 +491,14 @@ export class Core {
     const r = await c.tx.query(`UPDATE events SET delivery = 'claimed', delivered_at = now() WHERE id = $1 AND delivery = 'pending'`, [eventId]);
     if (!r.rowCount) return false;
     await this.touchClaimTx(c, eventId);
+    await this.closeReleaseNoticesTx(c, eventId);
     return true;
+  }
+
+  /** Someone picked the item up again (a claim, a result): a still-unread "Released a stuck claim" notice about it is stale. */
+  async closeReleaseNoticesTx(c: Ctx, eventId: string): Promise<void> {
+    const r = await c.tx.query(`SELECT id FROM events WHERE kind = 'report' AND recipient = $1 AND delivery = 'pending' AND decisions->'releasedClaim'->>'value' = $2`, [USER_ID, eventId]);
+    for (const row of r.rows) await s.patchEvent(c, row.id, { delivery: 'none' });
   }
 
   /** "Still working": pushes the claim timer back. */

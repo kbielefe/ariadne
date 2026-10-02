@@ -148,6 +148,11 @@ describe('claims', () => {
     // A result for an item no one claimed (another session, or a lost claim) still counts.
     await call(client, 'submit_result', { eventId: memo.id, status: 'progress', body: 'Outline done.' });
     expect(await s.getEvent(db, memo.id)).toMatchObject({ state: 'open', delivery: 'pending' });
+    // Progress is an FYI: on the thread, but queued for no one. A question still needs an answer.
+    const thread = async () => (await s.listEvents(db, { kind: 'report', actor: agent! })).filter((e) => e.replyTo === memo.id);
+    expect((await thread()).map((e) => [e.body, e.delivery])).toEqual([['**Progress.** Outline done.', 'none']]);
+    await call(client, 'submit_result', { eventId: memo.id, status: 'question', body: 'Which audience?' });
+    expect((await thread()).map((e) => e.delivery)).toEqual(['none', 'pending']);
     await call(client, 'submit_result', { eventId: memo.id, status: 'done', body: 'Memo drafted.' });
     expect(await s.getEvent(db, memo.id)).toMatchObject({ state: 'closed', delivery: 'delivered' });
 
@@ -189,9 +194,10 @@ describe('claims', () => {
     expect((await s.getEvent(db, fyi!.id)).delivery).toBe('pending');
     expect((await s.listEvents(db, { kind: 'report', actor: USER_ID })).filter((e) => e.sender === null)).toHaveLength(1);
 
-    // A session still on it after the claim expired re-claims it with still_working.
+    // A session still on it after the claim expired re-claims it with still_working; the release notice is now stale.
     await call(client, 'still_working', { eventId: note.id });
     expect((await s.getEvent(db, note.id)).delivery).toBe('claimed');
+    expect((await s.getEvent(db, fyi!.id)).delivery).toBe('none');
 
     // Done completes it and ends the claim; submit_result then says it's completed.
     await call(client, 'submit_result', { eventId: note.id, status: 'done' });
@@ -225,6 +231,8 @@ describe('claims', () => {
     expect((await s.getEvent(db, note.id)).delivery).toBe('pending');
     await call(client, 'get_context', { eventId: note.id });
     expect((await s.getEvent(db, note.id)).delivery).toBe('claimed');
+    const notices = (await s.listEvents(db, { kind: 'report', actor: USER_ID })).filter((e) => e.sender === null);
+    expect(notices.map((e) => e.delivery)).toEqual(['none']);
 
     // But not after it was given back on purpose.
     await call(client, 'release_assignment', { eventId: note.id });

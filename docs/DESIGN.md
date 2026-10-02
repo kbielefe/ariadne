@@ -92,7 +92,8 @@ anyone. Other agents may assign only to their direct subordinates (and to decide
 an interactive agent (the Analyst, or any agent with `attrs.interactive`) **or for you**, it is
 `pending` until a session claims it (`claimed`), then `delivered` when the session finishes. It is
 `held` while Ariadne waits for a System One decision, and `none` for other people and teams (they
-get a proxy card instead).
+get a proxy card instead). A **progress** report is an FYI: it is `none` for everyone (still on the
+thread and in the graph); only done, blocked, and question reports wait for someone.
 
 ## 4. One change vocabulary
 
@@ -148,7 +149,8 @@ Claude Code sessions ──MCP (/mcp)──► server     the Analyst, and inter
   optional `key` (one live timer per key, so a timer can be reset or cancelled). A scheduler in the
   server fires due ones every 15s, RabbitMQ or not. Kinds:
   - `claim_check`: a claim with no word for `ARIADNE_CLAIM_TIMEOUT_MINUTES` goes back in the queue,
-    and you get a note (not when the stuck item was itself for you);
+    and you get a note (not when the stuck item was itself for you). The note is withdrawn
+    (`none`) if the item is claimed again or gets a result before a session tells you;
   - `send`: an event sent later (`schedule_event`, `cancel_scheduled`, `list_scheduled` over MCP).
 - **Overdue:** an assignment with `dueAt` gets one "no report yet" report from Ariadne to its sender
   (checked by the same scheduler).

@@ -100,7 +100,7 @@ export const WORK_TOOLS: Tool[] = [
   {
     name: 'submit_result',
     description:
-      'Report on an item, whether or not this session claimed it. status: done completes it; blocked, question, and progress keep it open. For an assignment, body (required) is your report to whoever assigned it; lead with the outcome. For a report there is nothing to answer: done marks it handled. proposals: graph changes for your supervisor to apply (same ops as apply_ops); the Analyst applies its own with apply_ops instead. Fails only if the item is missing or already completed.',
+      'Report on an item, whether or not this session claimed it. status: done completes it; blocked, question, and progress keep it open. A progress report is an FYI: recorded on the thread, but not queued for anyone. For an assignment, body (required) is your report to whoever assigned it; lead with the outcome. For a report there is nothing to answer: done marks it handled. proposals: graph changes for your supervisor to apply (same ops as apply_ops); the Analyst applies its own with apply_ops instead. Fails only if the item is missing or already completed.',
     input: z.object({
       eventId: z.uuid(),
       status: z.enum(['done', 'blocked', 'question', 'progress']),
@@ -118,8 +118,11 @@ export const WORK_TOOLS: Tool[] = [
         let reportId: string | null = null;
         if (ev.kind === 'assign') {
           const label = { done: '', blocked: '**Blocked.** ', question: '**Question.** ', progress: '**Progress.** ' }[a.status];
-          reportId = (await core.sendTx(c, after, me, { kind: 'report', replyTo: ev.id, closes: done, body: `${label}${a.body}`, ...(a.proposals?.length ? { proposals: a.proposals } : {}) })).id;
+          reportId = (
+            await core.sendTx(c, after, me, { kind: 'report', replyTo: ev.id, closes: done, progress: a.status === 'progress', body: `${label}${a.body}`, ...(a.proposals?.length ? { proposals: a.proposals } : {}) })
+          ).id;
         }
+        await core.closeReleaseNoticesTx(c, ev.id);
         if (done) {
           await c.tx.query(`UPDATE events SET delivery = 'delivered', delivered_at = coalesce(delivered_at, now()) WHERE id = $1`, [ev.id]);
           await core.cancelTimerTx(c, claimKey(ev.id));
