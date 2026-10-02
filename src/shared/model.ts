@@ -57,11 +57,14 @@ export const AgentAttrs = z
   })
   .partial();
 
-export const ResourceType = z.enum(['repo', 'build', 'doc', 'link', 'other']);
+/** A branch is a shared scope: the tasks that use it (and what they need) ship together in one PR. */
+export const ResourceType = z.enum(['repo', 'branch', 'build', 'doc', 'link', 'other']);
 export const ResourceAttrs = z
   .object({
     type: ResourceType,
     url: z.string(),
+    repo: z.string().describe('For a branch: the repo it is in (name or URL)'),
+    branch: z.string().describe('For a branch: the git branch name'),
   })
   .partial();
 

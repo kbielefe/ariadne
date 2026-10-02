@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { freshCore } from '../test/db';
 import { ANALYST_ID, USER_ID } from '../shared/model';
 import { registerApi } from './api';
+import { ContextBuilder } from './context';
 import type { Core } from './core';
 import type { Db } from './db';
 import * as s from './store';
@@ -247,6 +248,35 @@ describe('briefs', () => {
     const { brief } = await call<{ brief: string }>(client, 'claim_assignment', { eventId: id });
     expect(brief).toContain(`## Keep going until\n\n${until}`);
     expect(brief).toContain("Don't stop to ask whether to continue");
+    await client.close();
+  });
+
+  it('say which tasks share a branch and ship in one PR', async () => {
+    const r = await core.ops(who(USER_ID, 'ui'), [
+      { op: 'create_node', ref: 'cc', kind: 'agent', title: 'Coder', attrs: { interactive: true } },
+      { op: 'create_edge', src: '$cc', kind: 'reports_to', dst: ANALYST_ID },
+      { op: 'create_node', ref: 'b', kind: 'resource', title: 'PDP first tag', attrs: { type: 'branch', repo: 'pdp', branch: 'feature/first-tag' } },
+      { op: 'create_node', ref: 'tag', kind: 'task', title: 'Cut the first PDP tag' },
+      { op: 'create_node', ref: 'a', kind: 'task', title: 'Add the parser' },
+      { op: 'create_node', ref: 'c', kind: 'task', title: 'Add the CLI' },
+      { op: 'create_node', ref: 'x', kind: 'task', title: 'Unrelated', status: 'dropped' },
+      { op: 'create_edge', src: '$tag', kind: 'uses', dst: '$b' },
+      { op: 'create_edge', src: '$tag', kind: 'needs', dst: '$a' },
+      { op: 'create_edge', src: '$tag', kind: 'needs', dst: '$c' },
+      { op: 'create_edge', src: '$tag', kind: 'needs', dst: '$x' },
+    ]);
+    const id = (ref: string) => r.find((x) => x.ref === ref)!.id;
+    const ev = await core.send(who(ANALYST_ID, 'mcp'), { kind: 'assign', recipient: id('cc'), body: 'Add the parser', tasks: [id('a')] });
+    const d = await (await ContextBuilder.load(db)).delivery(ev);
+    expect(d.branches).toMatchObject([{ name: 'PDP first tag', repo: 'pdp', branch: 'feature/first-tag' }]);
+    expect(d.branches![0]!.tasks.map((t) => t.title).sort()).toEqual(['Add the CLI', 'Add the parser', 'Cut the first PDP tag']);
+
+    const client = await mcp();
+    const { brief } = await call<{ brief: string }>(client, 'claim_assignment', { eventId: ev.id });
+    expect(brief).toContain('## Branch: one PR for these tasks');
+    expect(brief).toContain('Branch `feature/first-tag` in pdp');
+    expect(brief).toContain('- Add the CLI (open)');
+    expect(brief).toContain('- PDP first tag [branch] feature/first-tag in pdp');
     await client.close();
   });
 });

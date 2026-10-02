@@ -11,6 +11,8 @@ Your job, for each event you handle:
 - Keep the graph true. Tasks are nodes; "A needs B" edges break work down and order it (a task nothing
   needs is a root, the user's goal). Attach repos, Jenkins builds, and docs with "uses"; people to
   coordinate with with "involves". Put things on the highest task they apply to: subtasks inherit them.
+- Work that must ship together in one branch and PR ("everything until X goes in the same branch"): a
+  resource with attrs {type: "branch", repo, branch} that the highest such task "uses", not a note in a body.
 - Delegate. Use "assign" to give work to your subordinates (see "subordinates" in the delivery) with
   the tasks it's about.
 - Conversations with people or teams: "assign" to that person or team, with the questions in the body.
@@ -41,7 +43,7 @@ function taskMd(t: TaskContext): string {
   for (const g of t.guidance) lines.push('', `Guidance${g.from === 'self' ? '' : ` (from "${g.from.title}")`}: ${g.item}`);
   if (t.resources.length) {
     lines.push('', 'Resources:');
-    for (const r of t.resources) lines.push(`- ${r.item.name}${r.item.type ? ` [${String(r.item.type)}]` : ''}${r.item.url ? ` ${String(r.item.url)}` : ''}${r.item.note ? ` — ${r.item.note}` : ''}${r.item.about ? `\n  ${r.item.about}` : ''}`);
+    for (const r of t.resources) lines.push(`- ${r.item.name}${r.item.type ? ` [${String(r.item.type)}]` : ''}${r.item.branch ? ` ${String(r.item.branch)}` : ''}${r.item.repo ? ` in ${String(r.item.repo)}` : ''}${r.item.url ? ` ${String(r.item.url)}` : ''}${r.item.note ? ` — ${r.item.note}` : ''}${r.item.about ? `\n  ${r.item.about}` : ''}`);
   }
   if (t.coordinateWith.length) {
     lines.push('', 'Coordinate with:');
@@ -63,6 +65,17 @@ Stop early only if you are blocked or need a decision you can't make yourself, a
   );
 }
 
+/** Branches are shared scopes: every task that uses one ships in the same PR. */
+function branchesMd(d: Delivery): string {
+  if (!d.branches?.length) return '';
+  const one = (b: NonNullable<Delivery['branches']>[number]) =>
+    `Branch \`${String(b.branch ?? b.name)}\`${b.repo ? ` in ${String(b.repo)}` : ''}${b.url ? ` (${String(b.url)})` : ''}. These tasks share it and ship together in one PR:\n${b.tasks.map((t) => `- ${t.title} (${t.status})`).join('\n')}`;
+  return section(
+    'Branch: one PR for these tasks',
+    `${d.branches.map(one).join('\n\n')}\n\nDo this work on that branch (create it if it doesn't exist yet), not a new one per task. Open the PR when all of its tasks are done, not after each one.`,
+  );
+}
+
 /** For the analyst: the delivery as JSON (it can call get_context for more), plus what to do now. */
 export function analystPrompt(d: Delivery): string {
   const e = d.event;
@@ -72,8 +85,8 @@ export function analystPrompt(d: Delivery): string {
         : e.kind === 'report'
           ? `${e.from} reported (event ${e.id}, replying to ${e.replyTo ?? 'nothing'}). Review it (your onReview brief), apply or escalate its proposals, and tell the user only if it matters to them.`
           : `${e.from} sent you an assignment (event ${e.id}). Handle it.`;
-  const until = untilMd(e);
-  return `${what}\n\n${until ? `${until}\n` : ''}The delivery:\n\n\`\`\`json\n${JSON.stringify(d, null, 1)}\n\`\`\`\n`;
+  const extra = [untilMd(e), branchesMd(d)].filter(Boolean).join('\n');
+  return `${what}\n\n${extra ? `${extra}\n` : ''}The delivery:\n\n\`\`\`json\n${JSON.stringify(d, null, 1)}\n\`\`\`\n`;
 }
 
 /** For a session that claimed an event for the user: ask or tell them, then record it. */
@@ -113,6 +126,7 @@ export function agentPrompt(d: Delivery, answer = fencedAnswer(d)): string {
     untilMd(e),
     d.inReplyTo ? section('This replies to', d.inReplyTo.body) : '',
     d.tasks.length ? section('Tasks', d.tasks.map(taskMd).join('\n\n')) : '',
+    branchesMd(d),
     d.thread.length ? section('Recent history on these tasks', d.thread.map((t) => `- ${t.at} ${t.from} → ${t.to} (${t.kind}): ${t.body.split('\n')[0]}`).join('\n')) : '',
     d.subordinates.length
       ? section(

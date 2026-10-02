@@ -40,7 +40,7 @@ RabbitMQ to decouple agents from the core.
 | Kind | From → to | Meaning |
 |---|---|---|
 | `needs` | task → task | Must be done first (subtask or blocker). Acyclic |
-| `uses` | task → resource | Repo, Jenkins build, library docs, link |
+| `uses` | task → resource | Repo, branch, Jenkins build, library docs, link |
 | `involves` | task → actor | Coordinate with this person, agent, or team |
 | `reports_to` | actor → actor | Supervisor. Acyclic |
 | `member_of` | person/agent → team | |
@@ -50,6 +50,11 @@ assigned to (open assignments), and whether it's a root.
 
 **Inheritance:** a task's context includes the guidance, resources, and `involves` people of every
 task that (transitively) needs it. Attach a repo to a root task once, and all its subtasks get it.
+
+**Branches are shared scopes:** a resource with `attrs.type` `branch` (plus `repo` and `branch`)
+groups work that ships in one PR. Every task that uses it, and everything those tasks need, is in
+its scope. A delivery lists each branch its tasks use with all the tasks in its scope (`branches`),
+and the brief says to do the work on that branch and open one PR when they're all done.
 
 **Well-known actors:** *You* (`…0001`) and *Analyst* (`…0002`, which reports to you). They can be
 edited but not deleted.

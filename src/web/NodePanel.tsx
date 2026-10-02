@@ -203,6 +203,12 @@ function Attrs({ node: n, save }: { node: Node; save(p: { attrs: Record<string, 
             </select>
             <InlineText value={String(a.url ?? '')} onSave={(v) => set('url', v)} label="URL" placeholder="https://…" />
           </div>
+          {a.type === 'branch' && (
+            <div className="row" title="Tasks that use this branch ship together in one PR">
+              <InlineText value={String(a.repo ?? '')} onSave={(v) => set('repo', v)} label="Repo" placeholder="repo" />
+              <InlineText value={String(a.branch ?? '')} onSave={(v) => set('branch', v)} label="Branch" placeholder="branch name" />
+            </div>
+          )}
           {typeof a.url === 'string' && a.url && (
             <a href={a.url} target="_blank" rel="noreferrer" className="small">
               Open {a.url}
