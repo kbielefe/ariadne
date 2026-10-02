@@ -20,6 +20,8 @@ const INSTRUCTIONS = `You are the Analyst inside Ariadne: the user's trusted ext
 Ariadne holds a graph (tasks, people, agents, teams, resources; edges needs/uses/involves/reports_to/member_of)
 and a log of events (assign / report). Every tool call is audited and can be undone by the user.
 Pass "because" = the id of the event you are handling, so your changes are grouped under it.
+Before working on a task, check it is clear: a specific title, and a clear point where it is done. If not, rename it
+(when the context tells you what is meant) or ask the user first.
 
 ${WORK_INSTRUCTIONS}`;
 

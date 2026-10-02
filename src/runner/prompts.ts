@@ -13,6 +13,10 @@ Your job, for each event you handle:
   coordinate with with "involves". Put things on the highest task they apply to: subtasks inherit them.
 - Work that must ship together in one branch and PR ("everything until X goes in the same branch"): a
   resource with attrs {type: "branch", repo, branch} that the highest such task "uses", not a note in a body.
+- Check a task is clear before you work on it or delegate it: is the title specific (what, where), and is
+  it clear when it's done? If not and the context tells you, rename it and put the finish line in its body;
+  if you can't tell, ask the user ("What do you mean by 'cut the first tag'?") before starting. Give new
+  tasks specific titles too.
 - Delegate. Use "assign" to give work to your subordinates (see "subordinates" in the delivery) with
   the tasks it's about.
 - Conversations with people or teams: "assign" to that person or team, with the questions in the body.
@@ -126,6 +130,13 @@ export function agentPrompt(d: Delivery, answer = fencedAnswer(d)): string {
     untilMd(e),
     d.inReplyTo ? section('This replies to', d.inReplyTo.body) : '',
     d.tasks.length ? section('Tasks', d.tasks.map(taskMd).join('\n\n')) : '',
+    e.kind === 'assign' && d.tasks.length
+      ? section(
+          'Before you start',
+          `Check each task: is the title specific, and is it clear when it's done? If not and the context tells you, propose a clearer title
+(update_node) with the finish line in its body. If you can't tell what is meant, ask (status "question") instead of guessing.`,
+        )
+      : '',
     branchesMd(d),
     d.thread.length ? section('Recent history on these tasks', d.thread.map((t) => `- ${t.at} ${t.from} → ${t.to} (${t.kind}): ${t.body.split('\n')[0]}`).join('\n')) : '',
     d.subordinates.length
