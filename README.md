@@ -33,8 +33,10 @@ brings you only what needs you. The web UI is the graph view. The design and its
    the repos its tasks use. It claims the first one it can
    handle there with `claim_assignment`, does the work, and calls `submit_result`. A claim with no word
    for `ARIADNE_CLAIM_TIMEOUT_MINUTES` (default 30) goes back on the list and you're told;
-   `still_working` resets the clock. Ariadne doesn't track which session claimed what: any session
-   can submit a result.
+   any call that passes the item's id (`because` / `eventId`) or `still_working` resets the clock, and
+   `still_working` with `waitingOnUser` holds it for `ARIADNE_CLAIM_WAIT_MINUTES` (default 480) while
+   the session waits on you. Ariadne doesn't track which session claimed what: any session can submit
+   a result.
 
 4. Optional: headless agents over RabbitMQ. Create the agent in the Graph view and make it report to
    the Analyst. Then run:

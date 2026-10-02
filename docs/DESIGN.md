@@ -46,7 +46,9 @@ RabbitMQ to decouple agents from the core.
 | `member_of` | person/agent → team | |
 
 **Computed, not stored:** whether a task is ready (open, and everything it needs is closed), who it's
-assigned to (open assignments), and whether it's a root.
+assigned to (open assignments), and whether it's a root. When tasks close, Ariadne says which tasks
+that just made ready (`nowReady` in the `apply_ops` and `submit_result` answers, and a "Now ready"
+list at the end of a done report on an assignment), so the next step is never silent.
 
 **Inheritance:** a task's context includes the guidance, resources, and `involves` people of every
 task that (transitively) needs it. Attach a repo to a root task once, and all its subtasks get it.
@@ -103,7 +105,8 @@ anyone. Other agents may assign only to their direct subordinates (and to decide
 an interactive agent (the Analyst, or any agent with `attrs.interactive`) **or for you**, it is
 `pending` until a session claims it (`claimed`), then `delivered` when the session finishes. It is
 `held` while Ariadne waits for a System One decision, and `none` for other people and teams (they
-get a proxy card instead).
+get a proxy card instead). A **progress** report is an FYI: it is `none` for everyone (still on the
+thread and in the graph); only done, blocked, and question reports wait for someone.
 
 ## 4. One change vocabulary
 
@@ -150,13 +153,17 @@ Claude Code sessions ──MCP (/mcp)──► server     the Analyst, and inter
   completes it; `blocked`, `question`, and `progress` keep it open. Any report that closes an
   assignment ends its claim. For an item for you, the brief tells the session to ask or tell you,
   and your answer is the `submit_result` body. `still_working` resets the claim timer (re-claiming
-  an expired one). `release_assignment` puts it back. There is no model/effort dispatch: the session
+  an expired one); `waitingOnUser` makes it last `ARIADNE_CLAIM_WAIT_MINUTES` while the session waits
+  for your reply. Any other MCP call made for the item (`because` or `eventId`: `apply_ops`,
+  `get_context`, ...) is a heartbeat: it pushes the timer back (never shortens it) and re-claims an
+  item whose claim timed out. `release_assignment` puts it back (and a heartbeat doesn't re-claim it). There is no model/effort dispatch: the session
   already runs on whatever the person chose.
 - **Timers** (`timers` table): something Ariadne does at a time, with a `kind`, a `payload`, and an
   optional `key` (one live timer per key, so a timer can be reset or cancelled). A scheduler in the
   server fires due ones every 15s, RabbitMQ or not. Kinds:
   - `claim_check`: a claim with no word for `ARIADNE_CLAIM_TIMEOUT_MINUTES` goes back in the queue,
-    and you get a note (not when the stuck item was itself for you);
+    and you get a note (not when the stuck item was itself for you). The note is withdrawn
+    (`none`) if the item is claimed again or gets a result before a session tells you;
   - `send`: an event sent later (`schedule_event`, `cancel_scheduled`, `list_scheduled` over MCP).
 - **Overdue:** an assignment with `dueAt` gets one "no report yet" report from Ariadne to its sender
   (checked by the same scheduler).

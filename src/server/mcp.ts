@@ -12,6 +12,7 @@ import { type Direction, reachable } from '../shared/graph';
 import { ANALYST_ID, Card, EdgeKind, Effort, NodeKind, Op, Question, TaskStatus, USER_ID } from '../shared/model';
 import { ContextBuilder } from './context';
 import type { Core } from './core';
+import { applyOps } from './ops';
 import * as s from './store';
 import { who } from './store';
 import { WORK_INSTRUCTIONS, WORK_TOOLS } from './workmcp';
@@ -126,9 +127,17 @@ const tools: Tool[] = [
   {
     name: 'apply_ops',
     description:
-      'Create, update, or delete nodes, edges, and events in one transaction. Ops: create_node (kind, title, body?, status?, attrs?, ref?), update_node (id, ...; attrs merge, null removes), delete_node, create_edge (src, kind, dst, note?), update_edge, delete_edge (id, or src+kind+dst), update_event (id, body?, instructions?, state?, tasks?), delete_event. Use "ref" on create_node and "$ref" in later ops to link new nodes. Edge kinds: needs (task→task; a root task is one nothing needs), uses (task→resource), involves (task→person/agent/team), reports_to (actor→actor), member_of (person/agent→team).',
+      'Create, update, or delete nodes, edges, and events in one transaction. When it closes tasks, nowReady lists the tasks that just became ready. Ops: create_node (kind, title, body?, status?, attrs?, ref?), update_node (id, ...; attrs merge, null removes), delete_node, create_edge (src, kind, dst, note?), update_edge, delete_edge (id, or src+kind+dst), update_event (id, body?, instructions?, state?, tasks?), delete_event. Use "ref" on create_node and "$ref" in later ops to link new nodes. Edge kinds: needs (task→task; a root task is one nothing needs), uses (task→resource), involves (task→person/agent/team), reports_to (actor→actor), member_of (person/agent→team).',
     input: z.object({ ops: z.array(Op).min(1), because }),
-    run: async (core, a: { ops: unknown[] }, b) => ({ results: await core.ops(who(ANALYST_ID, 'mcp', b), a.ops) }),
+    run: async (core, a: { ops: Op[] }, b) =>
+      core.run(who(ANALYST_ID, 'mcp', b), async (c) => {
+        // Tasks this batch closes, so the answer can say what that made ready.
+        const closing = a.ops.flatMap((op) => (op.op === 'update_node' && op.status && op.status !== 'open' && !op.id.startsWith('$') ? [op.id] : []));
+        const wasOpen = closing.length ? (await c.tx.query(`SELECT id FROM nodes WHERE id::text = ANY($1) AND status = 'open'`, [closing])).rows.map((r) => r.id as string) : [];
+        const results = await applyOps(c, a.ops);
+        const nowReady = await core.newlyReady(c.tx, wasOpen);
+        return { results, ...(nowReady.length ? { nowReady } : {}) };
+      }),
   },
   {
     name: 'assign',
@@ -272,7 +281,12 @@ export function createMcpServer(core: Core): Server {
     if (!parsed.success) return fail(`Invalid arguments: ${z.prettifyError(parsed.error)}`);
     const args = parsed.data as Record<string, unknown>;
     try {
-      return ok(await tool.run(core, args as never, (args.because as string | undefined) ?? null));
+      const result = await tool.run(core, args as never, (args.because as string | undefined) ?? null);
+      // A call made for an event keeps its claim alive (core.heartbeat), so a session busy on it isn't timed out.
+      // The claim tools (workmcp.ts) set the claim timer themselves.
+      const forEvent = (args.because ?? args.eventId) as string | undefined;
+      if (forEvent && !WORK_TOOLS.includes(tool)) await core.heartbeat(forEvent).catch((err) => console.error('heartbeat.failed', forEvent, err));
+      return ok(result);
     } catch (err) {
       if (err instanceof z.ZodError) return fail(`Invalid: ${z.prettifyError(err)}`);
       return fail(err instanceof Error ? err.message : String(err));

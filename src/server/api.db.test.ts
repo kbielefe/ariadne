@@ -170,6 +170,11 @@ describe('claims', () => {
     // A result for an item no one claimed (another session, or a lost claim) still counts.
     await call(client, 'submit_result', { eventId: memo.id, status: 'progress', body: 'Outline done.' });
     expect(await s.getEvent(db, memo.id)).toMatchObject({ state: 'open', delivery: 'pending' });
+    // Progress is an FYI: on the thread, but queued for no one. A question still needs an answer.
+    const thread = async () => (await s.listEvents(db, { kind: 'report', actor: agent! })).filter((e) => e.replyTo === memo.id);
+    expect((await thread()).map((e) => [e.body, e.delivery])).toEqual([['**Progress.** Outline done.', 'none']]);
+    await call(client, 'submit_result', { eventId: memo.id, status: 'question', body: 'Which audience?' });
+    expect((await thread()).map((e) => e.delivery)).toEqual(['none', 'pending']);
     await call(client, 'submit_result', { eventId: memo.id, status: 'done', body: 'Memo drafted.' });
     expect(await s.getEvent(db, memo.id)).toMatchObject({ state: 'closed', delivery: 'delivered' });
 
@@ -211,15 +216,81 @@ describe('claims', () => {
     expect((await s.getEvent(db, fyi!.id)).delivery).toBe('pending');
     expect((await s.listEvents(db, { kind: 'report', actor: USER_ID })).filter((e) => e.sender === null)).toHaveLength(1);
 
-    // A session still on it after the claim expired re-claims it with still_working.
+    // A session still on it after the claim expired re-claims it with still_working; the release notice is now stale.
     await call(client, 'still_working', { eventId: note.id });
     expect((await s.getEvent(db, note.id)).delivery).toBe('claimed');
+    expect((await s.getEvent(db, fyi!.id)).delivery).toBe('none');
 
     // Done completes it and ends the claim; submit_result then says it's completed.
     await call(client, 'submit_result', { eventId: note.id, status: 'done' });
     expect((await s.getEvent(db, note.id)).delivery).toBe('delivered');
     expect(await core.listTimers()).toEqual([]);
     expect((await client.callTool({ name: 'submit_result', arguments: { eventId: note.id, status: 'done' } })).isError).toBe(true);
+    await client.close();
+  });
+
+  it('any call made for a claimed item keeps the claim alive, and waiting on you lasts longer', async () => {
+    const note = await core.send(who(null, 'core'), { kind: 'report', recipient: ANALYST_ID, body: 'Plan the week' });
+    const client = await mcp();
+    await call(client, 'claim_assignment', { eventId: note.id });
+    const deadline = async () => new Date((await core.listTimers({ kind: 'claim_check' }))[0]!.at).getTime();
+    const mins = (m: number) => Date.now() + m * 60_000;
+
+    // A change made because of the item pushes the deadline back, like still_working.
+    await call(client, 'still_working', { eventId: note.id, minutes: 1 });
+    expect(await deadline()).toBeLessThan(mins(2));
+    await call(client, 'apply_ops', { ops: [{ op: 'create_node', kind: 'task', title: 'Plan' }], because: note.id });
+    expect(await deadline()).toBeGreaterThan(mins(25));
+
+    // Waiting on you: a much longer claim, which later calls don't shorten.
+    const { timesOutAt } = await call<{ timesOutAt: string }>(client, 'still_working', { eventId: note.id, waitingOnUser: true });
+    expect(new Date(timesOutAt).getTime()).toBeGreaterThan(mins(7 * 60));
+    await call(client, 'get_context', { eventId: note.id });
+    expect(await deadline()).toBe(new Date(timesOutAt).getTime());
+
+    // A session still on it after its claim ran out claims it again just by calling for it.
+    expect(await core.fireDue(new Date(mins(9 * 60)))).toBe(1);
+    expect((await s.getEvent(db, note.id)).delivery).toBe('pending');
+    await call(client, 'get_context', { eventId: note.id });
+    expect((await s.getEvent(db, note.id)).delivery).toBe('claimed');
+    const notices = (await s.listEvents(db, { kind: 'report', actor: USER_ID })).filter((e) => e.sender === null);
+    expect(notices.map((e) => e.delivery)).toEqual(['none']);
+
+    // But not after it was given back on purpose.
+    await call(client, 'release_assignment', { eventId: note.id });
+    await call(client, 'get_context', { eventId: note.id });
+    expect((await s.getEvent(db, note.id)).delivery).toBe('pending');
+    await client.close();
+  });
+
+  it('says which tasks just became ready when tasks close, in apply_ops and the done report', async () => {
+    const [root, a, b, next] = (
+      await core.ops(who(USER_ID, 'ui'), [
+        { op: 'create_node', ref: 'root', kind: 'task', title: 'Ship it' },
+        { op: 'create_node', ref: 'a', kind: 'task', title: 'Build' },
+        { op: 'create_node', ref: 'b', kind: 'task', title: 'Test' },
+        { op: 'create_node', ref: 'next', kind: 'task', title: 'Demo' },
+        { op: 'create_edge', src: '$root', kind: 'needs', dst: '$a' },
+        { op: 'create_edge', src: '$root', kind: 'needs', dst: '$b' },
+        { op: 'create_edge', src: '$next', kind: 'needs', dst: '$a' },
+      ])
+    )
+      .filter((x) => x.ref)
+      .map((x) => x.id) as string[];
+    const ask = await core.send(who(USER_ID, 'mcp'), { kind: 'assign', recipient: ANALYST_ID, body: 'Build it', tasks: [a!] });
+    const client = await mcp();
+    await call(client, 'claim_assignment', { eventId: ask.id });
+
+    // Closing Build makes Demo ready; Ship it still waits on Test.
+    const closed = await call<{ nowReady?: unknown[] }>(client, 'apply_ops', { ops: [{ op: 'update_node', id: a, status: 'done' }], because: ask.id });
+    expect(closed.nowReady).toEqual([{ id: next, title: 'Demo' }]);
+    const done = await call<{ reportId: string; nowReady?: unknown[] }>(client, 'submit_result', { eventId: ask.id, status: 'done', body: 'Built.' });
+    expect(done.nowReady).toEqual([{ id: next, title: 'Demo' }]);
+    expect((await s.getEvent(db, done.reportId)).body).toBe(`Built.\n\nNow ready:\n- Demo (${next})`);
+
+    // Only tasks this batch closed count; nothing new: no nowReady.
+    expect((await call<{ nowReady?: unknown[] }>(client, 'apply_ops', { ops: [{ op: 'update_node', id: a, status: 'done' }] })).nowReady).toBeUndefined();
+    expect((await call<{ nowReady?: unknown[] }>(client, 'apply_ops', { ops: [{ op: 'update_node', id: b, status: 'dropped' }] })).nowReady).toEqual([{ id: root, title: 'Ship it' }]);
     await client.close();
   });
 

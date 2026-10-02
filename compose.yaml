@@ -23,6 +23,7 @@ services:
       ARIADNE_LISTEN_PORT: "3100"
       ARIADNE_ALLOWED_HOSTS: 127.0.0.1:${ARIADNE_PORT:-3100},localhost:${ARIADNE_PORT:-3100}
       ARIADNE_CLAIM_TIMEOUT_MINUTES: ${ARIADNE_CLAIM_TIMEOUT_MINUTES:-30}
+      ARIADNE_CLAIM_WAIT_MINUTES: ${ARIADNE_CLAIM_WAIT_MINUTES:-480}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     # Map you to the image's node user.
     userns_mode: "keep-id:uid=1000,gid=1000"

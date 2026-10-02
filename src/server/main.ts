@@ -34,7 +34,7 @@ async function main() {
   if (process.argv.includes('--migrate-only')) return db.end();
 
   const hub = new Hub();
-  const core = new Core(db, hub, { decideTimeoutMs: Number(env.ARIADNE_DECIDE_TIMEOUT_MS ?? 5000), claimTimeoutMinutes: Number(env.ARIADNE_CLAIM_TIMEOUT_MINUTES ?? 30) });
+  const core = new Core(db, hub, { decideTimeoutMs: Number(env.ARIADNE_DECIDE_TIMEOUT_MS ?? 5000), claimTimeoutMinutes: Number(env.ARIADNE_CLAIM_TIMEOUT_MINUTES ?? 30), claimWaitMinutes: Number(env.ARIADNE_CLAIM_WAIT_MINUTES ?? 480) });
   await core.releaseHeld();
 
   const app = Fastify({ logger: { level: env.LOG_LEVEL ?? 'info' }, bodyLimit: 2 * 1024 * 1024 });
