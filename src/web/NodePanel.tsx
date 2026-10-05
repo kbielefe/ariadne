@@ -300,12 +300,15 @@ function RawAttrs({ node, save }: { node: Node; save(p: { attrs: Record<string, 
 
 // ---------------------------------------------------------------- edges
 
+/** How an edge reads from its destination's side. */
+const incomingLabel = (k: EdgeKind) => (k === 'needs' ? 'needed by' : k === 'reports_to' ? 'supervises' : k === 'member_of' ? 'has member' : `${EDGE_RULES[k].label} (from)`);
+
 function Edges({ detail: d, run, onSelect }: { detail: NodeDetail; run(ops: Op[]): Promise<unknown>; onSelect(id: string): void }) {
   const { byId } = useApp();
   const n = d.node;
   const out = d.edges.filter((e) => e.src === n.id);
   const inc = d.edges.filter((e) => e.dst === n.id);
-  const label = (e: Edge, outgoing: boolean) => (outgoing ? EDGE_RULES[e.kind].label : e.kind === 'needs' ? 'needed by' : e.kind === 'reports_to' ? 'supervises' : `${EDGE_RULES[e.kind].label} (from)`);
+  const label = (e: Edge, outgoing: boolean) => (outgoing ? EDGE_RULES[e.kind].label : incomingLabel(e.kind));
   const row = (e: Edge, outgoing: boolean) => {
     const other = outgoing ? e.dst : e.src;
     return (
@@ -357,7 +360,7 @@ function QuickSubtask({ parent, run }: { parent: string; run(ops: Op[]): Promise
 function AddEdge({ node: n, run }: { node: Node; run(ops: Op[]): Promise<unknown> }) {
   const options = (Object.entries(EDGE_RULES) as [EdgeKind, (typeof EDGE_RULES)[EdgeKind]][]).flatMap(([k, r]) => [
     ...(r.src.includes(n.kind) ? [{ key: `out:${k}`, kind: k, outgoing: true, label: r.label, targets: r.dst }] : []),
-    ...(r.dst.includes(n.kind) && k !== 'member_of' ? [{ key: `in:${k}`, kind: k, outgoing: false, label: k === 'needs' ? 'needed by' : k === 'reports_to' ? 'supervises' : `${r.label} (from)`, targets: r.src }] : []),
+    ...(r.dst.includes(n.kind) ? [{ key: `in:${k}`, kind: k, outgoing: false, label: incomingLabel(k), targets: r.src }] : []),
   ]);
   const [choice, setChoice] = useState(options[0]?.key ?? '');
   const o = options.find((x) => x.key === choice) ?? options[0];

@@ -52,6 +52,13 @@ describe('graph', () => {
       { op: 'create_edge', src: '$a', kind: 'needs', dst: '$b' },
     ]);
     await expect(core.ops(asUser(), [{ op: 'create_edge', src: t.b, kind: 'needs', dst: t.a }])).rejects.toThrow(/cycle/);
+    // Teams nest, but never inside themselves.
+    const tm = await ids([
+      { op: 'create_node', ref: 'pod', kind: 'team', title: 'Pod' },
+      { op: 'create_node', ref: 'dept', kind: 'team', title: 'Dept' },
+      { op: 'create_edge', src: '$pod', kind: 'member_of', dst: '$dept' },
+    ]);
+    await expect(core.ops(asUser(), [{ op: 'create_edge', src: tm.dept, kind: 'member_of', dst: tm.pod }])).rejects.toThrow(/cycle/);
     await expect(core.ops(asUser(), [{ op: 'create_edge', src: t.a, kind: 'uses', dst: t.b }])).rejects.toThrow(/uses goes from task to resource/);
     await expect(core.ops(asUser(), [{ op: 'create_node', kind: 'task', title: 'C', attrs: { guidence: 'typo' } }])).rejects.toThrow(/Allowed keys: guidance/);
     await expect(core.ops(asUser(), [{ op: 'delete_node', id: USER_ID }])).rejects.toThrow(/not deleted/);

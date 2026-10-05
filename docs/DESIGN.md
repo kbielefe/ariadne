@@ -42,7 +42,7 @@ lines, branch scopes, and undo.
 | `uses` | task → resource | Repo, branch, Jenkins build, library docs, link |
 | `involves` | task → person/team | Coordinate with them |
 | `reports_to` | person/team → person/team | Supervisor. Acyclic |
-| `member_of` | person → team | |
+| `member_of` | person/team → team | Acyclic |
 
 **Computed, not stored:** whether a task is ready (open, and everything it needs is closed) and whether
 it's a root (no task needs it). When `apply_ops` closes tasks, its answer lists the tasks that just

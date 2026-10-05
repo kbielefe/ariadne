@@ -106,7 +106,7 @@ const tools: Tool[] = [
   {
     name: 'apply_ops',
     description:
-      'Create, update, or delete nodes and edges in one transaction. When it closes tasks, nowReady lists the tasks that just became ready. Ops: create_node (kind, title, body?, status?, attrs?, ref?), update_node (id, ...; attrs merge, null removes), delete_node, create_edge (src, kind, dst, note?), update_edge, delete_edge (id, or src+kind+dst). Use "ref" on create_node and "$ref" in later ops to link new nodes. Edge kinds: needs (task→task; a root task is one nothing needs), uses (task→resource), involves (task→person/team), reports_to (person/team→person/team), member_of (person→team).',
+      'Create, update, or delete nodes and edges in one transaction. When it closes tasks, nowReady lists the tasks that just became ready. Ops: create_node (kind, title, body?, status?, attrs?, ref?), update_node (id, ...; attrs merge, null removes), delete_node, create_edge (src, kind, dst, note?), update_edge, delete_edge (id, or src+kind+dst). Use "ref" on create_node and "$ref" in later ops to link new nodes. Edge kinds: needs (task→task; a root task is one nothing needs), uses (task→resource), involves (task→person/team), reports_to (person/team→person/team), member_of (person/team→team).',
     input: z.object({ ops: z.array(Op).min(1) }),
     run: async (core, a: { ops: Op[] }) =>
       core.run(who(null, 'mcp'), async (c) => {

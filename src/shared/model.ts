@@ -74,7 +74,7 @@ export const EDGE_RULES: Record<EdgeKind, { src: readonly NodeKind[]; dst: reado
   uses: { src: ['task'], dst: ['resource'], acyclic: false, label: 'uses' },
   involves: { src: ['task'], dst: ACTOR_KINDS, acyclic: false, label: 'coordinate with' },
   reports_to: { src: ACTOR_KINDS, dst: ACTOR_KINDS, acyclic: true, label: 'reports to' },
-  member_of: { src: ['person'], dst: ['team'], acyclic: false, label: 'member of' },
+  member_of: { src: ACTOR_KINDS, dst: ['team'], acyclic: true, label: 'member of' },
 };
 
 export const Edge = z.object({
