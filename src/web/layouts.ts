@@ -1,7 +1,7 @@
 // Layouts for the graph view, as pure functions from nodes and edges to positions.
-import type { ELK, ElkNode } from 'elkjs/lib/elk.bundled.js';
+import type { ELK, ElkExtendedEdge, ElkNode } from 'elkjs/lib/elk.bundled.js';
 import type { EdgeKind, NodeKind } from '../shared/model';
-import { NODE_SIZE, type Pos, type View } from './placement';
+import { type Bend, NODE_SIZE, type Pos, toBend, type View } from './placement';
 
 export const LAYOUTS = {
   layered: 'Layered',
@@ -19,6 +19,7 @@ export interface LayoutNode {
   order: number;
 }
 export interface LayoutEdge {
+  id: string;
   src: string;
   dst: string;
   kind: EdgeKind;
@@ -35,8 +36,11 @@ export const rankDir = (nodeCount: number): 'TB' | 'LR' => (nodeCount > 10 ? 'LR
 let elk: Promise<ELK> | null = null;
 const getElk = () => (elk ??= import('elkjs/lib/elk.bundled.js').then((m) => new m.default()));
 
-/** ELK layered positions (centres) for these nodes and edges, keeping the given order where it adds no crossings. */
-async function elkLayered(nodes: readonly LayoutNode[], edges: readonly LayoutEdge[], dir: 'TB' | 'LR'): Promise<Map<string, Pos>> {
+/**
+ * ELK layered positions (centres) for these nodes, keeping the given order where it adds no crossings,
+ * and each edge's bend points (slanted, never right angles) that keep it off the nodes it passes.
+ */
+async function elkLayered(nodes: readonly LayoutNode[], edges: readonly LayoutEdge[], dir: 'TB' | 'LR'): Promise<{ pos: Map<string, Pos>; bends: Map<string, Pos[]> }> {
   const byOrder = <T>(f: (x: T) => number) => (a: T, b: T) => f(a) - f(b);
   const order = new Map(nodes.map((n) => [n.id, n.order]));
   const graph: ElkNode = {
@@ -51,12 +55,15 @@ async function elkLayered(nodes: readonly LayoutNode[], edges: readonly LayoutEd
       'elk.layered.considerModelOrder.components': 'MODEL_ORDER',
       'elk.layered.crossingMinimization.forceNodeModelOrder': 'false',
       'elk.layered.nodePlacement.strategy': 'BRANDES_KOEPF',
+      'elk.edgeRouting': 'POLYLINE',
     },
     children: [...nodes].sort(byOrder((n) => n.order)).map((n) => ({ id: n.id, width: NODE_SIZE[n.kind].w, height: NODE_SIZE[n.kind].h })),
-    edges: [...edges].sort(byOrder((e) => order.get(e.src)! * nodes.length + order.get(e.dst)!)).map((e, i) => ({ id: `e${i}`, sources: [e.src], targets: [e.dst] })),
+    edges: [...edges].sort(byOrder((e) => order.get(e.src)! * nodes.length + order.get(e.dst)!)).map((e) => ({ id: e.id, sources: [e.src], targets: [e.dst] })),
   };
   const out = await (await getElk()).layout(graph);
-  return new Map((out.children ?? []).map((c) => [c.id, { x: c.x! + c.width! / 2, y: c.y! + c.height! / 2 }]));
+  const pos = new Map((out.children ?? []).map((c) => [c.id, { x: c.x! + c.width! / 2, y: c.y! + c.height! / 2 }]));
+  const bends = new Map((out.edges ?? []).map((e) => [e.id, (e as ElkExtendedEdge).sections?.flatMap((s) => s.bendPoints ?? []) ?? []]));
+  return { pos, bends };
 }
 
 /** Org edges point up the hierarchy (to the manager or team); flip them so the hierarchy reads top down. */
@@ -81,7 +88,7 @@ export async function layered(nodes: readonly LayoutNode[], edges: readonly Layo
   const half = (n: LayoutNode, axis: 'x' | 'y') => (axis === 'x' ? NODE_SIZE[n.kind].w : NODE_SIZE[n.kind].h) / 2;
 
   const coreEdges = edges.filter((e) => inCore.has(e.src) && inCore.has(e.dst) && (!tasks.length || e.kind === 'needs')).map(downward);
-  const pos = await elkLayered(core, coreEdges, dir);
+  const { pos, bends: points } = await elkLayered(core, coreEdges, dir);
   let edge = Math.max(...core.map((n) => pos.get(n.id)![side] + half(n, side)));
 
   // The lane: each linked node level with the middle of its tasks, sliding along the lane to make room.
@@ -109,14 +116,23 @@ export async function layered(nodes: readonly LayoutNode[], edges: readonly Layo
   const rest = others.filter((n) => !pos.has(n.id));
   if (rest.length) {
     const ids = new Set(rest.map((n) => n.id));
-    const sub = await elkLayered(rest, edges.filter((e) => ids.has(e.src) && ids.has(e.dst)).map(downward), dir);
+    const { pos: sub, bends: subPoints } = await elkLayered(rest, edges.filter((e) => ids.has(e.src) && ids.has(e.dst)).map(downward), dir);
     const min = (axis: 'x' | 'y') => Math.min(...[...sub].map(([id, p]) => p[axis] - half(rest.find((n) => n.id === id)!, axis)));
     const top = Math.min(...core.map((n) => pos.get(n.id)![rank] - half(n, rank)));
     const dSide = edge + LANE_GAP - min(side);
     const dRank = top - min(rank);
-    for (const [id, p] of sub) pos.set(id, { [side]: p[side] + dSide, [rank]: p[rank] + dRank } as unknown as Pos);
+    const move = (p: Pos) => ({ [side]: p[side] + dSide, [rank]: p[rank] + dRank }) as unknown as Pos;
+    for (const [id, p] of sub) pos.set(id, move(p));
+    for (const [id, ps] of subPoints) points.set(id, ps.map(move));
   }
-  return { flow, pos };
+
+  // Bends are kept relative to each edge's ends, so they stretch if a node moves a little.
+  const bends = new Map<string, Bend>();
+  for (const e of edges) {
+    const b = points.has(e.id) ? toBend(pos.get(e.src)!, pos.get(e.dst)!, points.get(e.id)!) : null;
+    if (b) bends.set(e.id, b);
+  }
+  return { flow, pos, bends };
 }
 
 const RING_GAP = 40;

@@ -4,7 +4,7 @@ import { layered, type LayoutEdge, type LayoutNode, radial, rankDir } from './la
 import { NODE_SIZE, type Pos } from './placement';
 
 const n = (id: string, order: number, kind: NodeKind = 'task'): LayoutNode => ({ id, kind, order });
-const e = (src: string, dst: string, kind: EdgeKind = 'needs'): LayoutEdge => ({ src, dst, kind });
+const e = (src: string, dst: string, kind: EdgeKind = 'needs'): LayoutEdge => ({ id: `${src}>${dst}`, src, dst, kind });
 const overlap = (a: Pos, b: Pos) => Math.abs(a.x - b.x) < NODE_SIZE.task.w && Math.abs(a.y - b.y) < NODE_SIZE.task.h;
 
 /** Build a forest: node i's parents (things that need it) are parentOf(i). */
@@ -48,6 +48,22 @@ describe('layered', () => {
       }
       for (const a of nodes) for (const b of nodes) if (a !== b) expect(overlap(pos.get(a.id)!, pos.get(b.id)!)).toBe(false);
     }
+  });
+
+  it('bends an edge that skips a rank around the node between', async () => {
+    const nodes = [n('top', 0), n('mid', 1), n('low', 2)];
+    const { pos, bends } = await layered(nodes, [e('top', 'mid'), e('mid', 'low'), e('top', 'low')]);
+    const b = bends!.get('top>low')!;
+    // The bend goes beside the middle node: off the straight line by at least half its width.
+    const t = pos.get('top')!;
+    const l = pos.get('low')!;
+    const at = (i: number) => {
+      const len = Math.hypot(l.x - t.x, l.y - t.y);
+      return { x: t.x + (l.x - t.x) * b.w[i]! - ((l.y - t.y) / len) * b.d[i]!, y: t.y + (l.y - t.y) * b.w[i]! + ((l.x - t.x) / len) * b.d[i]! };
+    };
+    const m = pos.get('mid')!;
+    expect(b.w.some((_, i) => Math.abs(at(i).y - m.y) < NODE_SIZE.task.h && Math.abs(at(i).x - m.x) >= NODE_SIZE.task.w / 2)).toBe(true);
+    expect(bends!.has('top>mid')).toBe(false);
   });
 
   it('keeps people and resources out of the task ranks, in a lane level with their tasks', async () => {

@@ -8,7 +8,7 @@ import { remember } from './api';
 import { useApp } from './App';
 import { KindIcon } from './bits';
 import { NewNodeForm, NodePanel } from './NodePanel';
-import { NODE_SIZE, placeNew, type Pos, type View, loadView, saveView } from './placement';
+import { NODE_SIZE, placeNew, type View, loadView, saveView } from './placement';
 import { DEFAULT_LAYOUT, isLayout, LAYOUTS, layered, type LayoutEdge, type LayoutName, type LayoutNode, radial } from './layouts';
 import { DEFAULT_SORT, isSort, SORTS, type Sort, sortNodes } from './order';
 
@@ -37,6 +37,10 @@ function loadLayout(): LayoutName {
   return isLayout(s) ? s : DEFAULT_LAYOUT;
 }
 
+function loadBends(): boolean {
+  return remember.get('graphBends') !== 'off';
+}
+
 function loadFilters(): Filters {
   try {
     const f: Filters = { ...DEFAULT_FILTERS, ...JSON.parse(remember.get('graphFilters') ?? '{}') };
@@ -59,6 +63,11 @@ export function GraphView({ selected, onSelect }: { selected: string | null; onS
   const setLayout = (x: LayoutName) => {
     setLayoutState(x);
     remember.set('graphLayout', x);
+  };
+  const [bends, setBendsState] = useState(loadBends);
+  const setBends = (on: boolean) => {
+    setBendsState(on);
+    remember.set('graphBends', on ? 'on' : 'off');
   };
   const [panes, setPanes] = useState<Panes>(() => {
     try {
@@ -175,6 +184,9 @@ export function GraphView({ selected, onSelect }: { selected: string | null; onS
               </option>
             ))}
           </select>
+          <label className="check" title={layout === 'layered' ? 'Route edges around the nodes they pass, instead of straight through' : 'Only the layered layout routes edges'}>
+            <input type="checkbox" checked={bends} disabled={layout !== 'layered'} onChange={(e) => setBends(e.target.checked)} /> bend edges
+          </label>
         </fieldset>
         <fieldset>
           <legend>
@@ -193,7 +205,7 @@ export function GraphView({ selected, onSelect }: { selected: string | null; onS
         </p>
       </aside>
       <div className="canvas-wrap">
-        <Canvas elements={elements} viewKey={viewKey} arrange={arrangers[layout](focus)} selected={selected} onSelect={onSelect} onFocus={setFocus} />
+        <Canvas elements={elements} viewKey={viewKey} arrange={arrangers[layout](focus)} bends={bends && layout === 'layered'} selected={selected} onSelect={onSelect} onFocus={setFocus} />
         <div className="canvas-tools">
           <button className="btn icon-btn" aria-label={panes.filters ? 'Hide filters' : 'Show filters'} aria-pressed={panes.filters} title={panes.filters ? 'Hide filters' : 'Show filters'} onClick={() => setPane({ filters: !panes.filters })}>
             {panes.filters ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}
@@ -367,7 +379,7 @@ type Arrange = (c: Cy) => Promise<View>;
 function layoutInput(c: Cy): { nodes: LayoutNode[]; edges: LayoutEdge[] } {
   return {
     nodes: c.nodes().map((n) => ({ id: n.id(), kind: kindOf(n), order: n.data('order') as number })),
-    edges: c.edges().map((e) => ({ src: e.data('source') as string, dst: e.data('target') as string, kind: e.classes()[0] as EdgeKind })),
+    edges: c.edges().map((e) => ({ id: e.id(), src: e.data('source') as string, dst: e.data('target') as string, kind: e.classes()[0] as EdgeKind })),
   };
 }
 
@@ -400,12 +412,25 @@ function fitView(c: Cy) {
   }
 }
 
-function Canvas(p: { elements: ElementDefinition[]; viewKey: string; arrange: Arrange; selected: string | null; onSelect(id: string | null): void; onFocus(id: string): void }) {
-  const { elements, viewKey, selected } = p;
+const BEND_STYLE = 'curve-style edge-distances segment-weights segment-distances segment-radius';
+
+/** Draw edges along their bend points (with rounded corners), or straight when `on` is false. */
+function drawBends(c: Cy, v: View | undefined, on: boolean) {
+  c.batch(() =>
+    c.edges().forEach((e) => {
+      const b = on ? v?.bends?.get(e.id()) : undefined;
+      if (b) e.style({ 'curve-style': 'round-segments', 'edge-distances': 'node-position', 'segment-weights': b.w, 'segment-distances': b.d, 'segment-radius': 30 } as never);
+      else e.removeStyle(BEND_STYLE);
+    }),
+  );
+}
+
+function Canvas(p: { elements: ElementDefinition[]; viewKey: string; arrange: Arrange; bends: boolean; selected: string | null; onSelect(id: string | null): void; onFocus(id: string): void }) {
+  const { elements, viewKey, selected, bends } = p;
   const box = useRef<HTMLDivElement>(null);
   const cy = useRef<Cy | null>(null);
-  const handlers = useRef({ onSelect: p.onSelect, onFocus: p.onFocus, arrange: p.arrange });
-  handlers.current = { onSelect: p.onSelect, onFocus: p.onFocus, arrange: p.arrange };
+  const handlers = useRef({ onSelect: p.onSelect, onFocus: p.onFocus, arrange: p.arrange, bends: p.bends });
+  handlers.current = { onSelect: p.onSelect, onFocus: p.onFocus, arrange: p.arrange, bends: p.bends };
   // The arrangement on screen; nodes keep these positions until the view changes or you re-arrange.
   const view = useRef<{ key: string; v: View } | null>(null);
   const runs = useRef(0);
@@ -420,7 +445,15 @@ function Canvas(p: { elements: ElementDefinition[]; viewKey: string; arrange: Ar
       if (e.target === c) handlers.current.onSelect(null);
     });
     c.on('dbltap', 'node', (e) => handlers.current.onFocus(e.target.id()));
-    // A node you drag stays where you put it.
+    // A node you drag stays where you put it. Its edges forget their bends, which no longer fit.
+    c.on('drag', 'node', (e) => {
+      const cur = view.current;
+      const bent = e.target.connectedEdges().filter((x: cytoscape.EdgeSingular) => cur?.v.bends?.has(x.id()));
+      if (bent.nonempty()) {
+        bent.forEach((x: cytoscape.EdgeSingular) => void cur!.v.bends!.delete(x.id()));
+        bent.removeStyle(BEND_STYLE);
+      }
+    });
     c.on('dragfree', 'node', (e) => {
       if (!view.current) return;
       view.current.v.pos.set(e.target.id(), { ...e.target.position() });
@@ -457,13 +490,15 @@ function Canvas(p: { elements: ElementDefinition[]; viewKey: string; arrange: Ar
         } else c.add(e);
       }
     });
-    const apply = (pos: ReadonlyMap<string, Pos>) =>
+    const apply = (v: View) => {
       c.batch(() =>
         c.nodes().forEach((n) => {
-          const at = pos.get(n.id());
+          const at = v.pos.get(n.id());
           if (at) n.position({ ...at });
         }),
       );
+      drawBends(c, v, handlers.current.bends);
+    };
     // Nodes this view hasn't placed yet go beside their neighbours.
     const placeRest = (cur: { key: string; v: View }) => {
       const ids = c.nodes().map((n) => n.id());
@@ -472,7 +507,7 @@ function Canvas(p: { elements: ElementDefinition[]; viewKey: string; arrange: Ar
       const visible = new Map([...cur.v.pos].filter(([id]) => want.has(id)));
       const added = placeNew(ids, edges, visible, size, cur.v.flow);
       for (const [id, at] of added) cur.v.pos.set(id, at);
-      apply(cur.v.pos);
+      apply(cur.v);
       if (added.size) saveView(cur.key, cur.v);
     };
 
@@ -498,11 +533,13 @@ function Canvas(p: { elements: ElementDefinition[]; viewKey: string; arrange: Ar
     void handlers.current.arrange(c).then((v) => {
       if (run !== runs.current) return;
       view.current = { key: viewKey, v };
-      apply(v.pos);
+      apply(v);
       saveView(viewKey, v);
       fitView(c);
     });
   }, [elements, viewKey, rearranged]);
+
+  useEffect(() => drawBends(cy.current!, view.current?.v, bends), [bends]);
 
   useEffect(() => {
     const c = cy.current!;

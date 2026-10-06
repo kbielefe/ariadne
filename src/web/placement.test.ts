@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { placeNew, type Pos } from './placement';
+import { placeNew, type Pos, toBend } from './placement';
 
 const size = () => ({ w: 180, h: 52 });
 const down = { x: 0, y: 142 };
@@ -43,5 +43,14 @@ describe('placeNew', () => {
   it('works sideways too (left to right)', () => {
     const out = placeNew(['b'], [{ src: 'a', dst: 'b' }], new Map([['a', { x: 0, y: 0 }]]), size, { x: 270, y: 0 });
     expect(out.get('b')).toEqual({ x: 270, y: 0 });
+  });
+});
+
+describe('toBend', () => {
+  it('measures along the edge and off to its left-hand normal, in drawing order', () => {
+    // a → b points right; cytoscape's normal is (-dy, dx), so +y is a positive distance.
+    expect(toBend({ x: 0, y: 0 }, { x: 100, y: 0 }, [{ x: 75, y: -10 }, { x: 25, y: 20 }])).toEqual({ w: [0.25, 0.75], d: [20, -10] });
+    expect(toBend({ x: 0, y: 0 }, { x: 0, y: 0 }, [{ x: 1, y: 1 }])).toBeNull();
+    expect(toBend({ x: 0, y: 0 }, { x: 1, y: 0 }, [])).toBeNull();
   });
 });

@@ -12,10 +12,21 @@ export interface Size {
   h: number;
 }
 
+/**
+ * Where an edge bends, relative to its ends (cytoscape's segment weights and distances):
+ * each point is `w` of the way from source to target, then `d` off to the side.
+ */
+export interface Bend {
+  w: number[];
+  d: number[];
+}
+
 /** A remembered arrangement. `flow` points from a node toward what it needs (one rank step). */
 export interface View {
   flow: Pos;
   pos: Map<string, Pos>;
+  /** Edge id → bend points, for layouts that route edges. */
+  bends?: Map<string, Bend>;
 }
 
 /** Drawn node sizes; layouts and placement keep this much room. */
@@ -25,7 +36,7 @@ const STORE = 'graphViews';
 const MAX_VIEWS = 12;
 const GAP = 14;
 
-type Stored = [key: string, flow: Pos, pos: Record<string, [number, number]>][];
+type Stored = [key: string, flow: Pos, pos: Record<string, [number, number]>, bends?: Record<string, Bend>][];
 
 function readStore(): Stored {
   try {
@@ -39,13 +50,16 @@ function readStore(): Stored {
 export function loadView(key: string): View | null {
   const hit = readStore().find((v) => v[0] === key);
   if (!hit) return null;
-  return { flow: hit[1], pos: new Map(Object.entries(hit[2]).map(([id, [x, y]]) => [id, { x, y }])) };
+  const pos = new Map(Object.entries(hit[2]).map(([id, [x, y]]) => [id, { x, y }]));
+  return { flow: hit[1], pos, ...(hit[3] ? { bends: new Map(Object.entries(hit[3])) } : {}) };
 }
 
 /** Save a view as the most recent; the oldest views beyond MAX_VIEWS are forgotten. */
 export function saveView(key: string, v: View) {
   const pos = Object.fromEntries([...v.pos].map(([id, p]) => [id, [Math.round(p.x), Math.round(p.y)]]));
-  remember.set(STORE, JSON.stringify([[key, v.flow, pos], ...readStore().filter((s) => s[0] !== key)].slice(0, MAX_VIEWS)));
+  const round = (x: number) => Math.round(x * 1000) / 1000;
+  const bends = v.bends?.size ? Object.fromEntries([...v.bends].map(([id, b]) => [id, { w: b.w.map(round), d: b.d.map(Math.round) }])) : undefined;
+  remember.set(STORE, JSON.stringify([[key, v.flow, pos, ...(bends ? [bends] : [])], ...readStore().filter((s) => s[0] !== key)].slice(0, MAX_VIEWS)));
 }
 
 const overlaps = (a: Pos, as: Size, b: Pos, bs: Size) => Math.abs(a.x - b.x) * 2 < as.w + bs.w + GAP * 2 && Math.abs(a.y - b.y) * 2 < as.h + bs.h + GAP * 2;
@@ -99,4 +113,17 @@ export function placeNew(ids: readonly string[], edges: readonly { src: string; 
     for (const id of todo) put(id, free(id, { x: (flow.x / len) * far + side.x * start, y: (flow.y / len) * far + side.y * start }));
   }
   return out;
+}
+
+/** Absolute bend points as cytoscape segment weights and distances for an edge from `a` to `b`. */
+export function toBend(a: Pos, b: Pos, points: readonly Pos[]): Bend | null {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const l2 = dx * dx + dy * dy;
+  if (!points.length || !l2) return null;
+  const l = Math.sqrt(l2);
+  const rel = points.map((p) => ({ w: ((p.x - a.x) * dx + (p.y - a.y) * dy) / l2, d: (-(p.x - a.x) * dy + (p.y - a.y) * dx) / l }));
+  // Drawn in order from source to target.
+  rel.sort((p, q) => p.w - q.w);
+  return { w: rel.map((p) => p.w), d: rel.map((p) => p.d) };
 }
