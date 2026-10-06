@@ -72,7 +72,7 @@ export function NewNodeForm({ onCreated }: { onCreated(id: string): void }) {
 // ================================================================ view / edit
 
 export function NodePanel({ id, onSelect, onClose }: { id: string; onSelect(id: string | null): void; onClose(): void }) {
-  const { version, setFocus, focus } = useApp();
+  const { version, setFocus, focus, impact } = useApp();
   const [d, setD] = useState<NodeDetail | null>(null);
   const { error, run } = useOps();
   useEffect(() => {
@@ -104,6 +104,11 @@ export function NodePanel({ id, onSelect, onClose }: { id: string; onSelect(id: 
           </select>
         )}
         {d.readiness && <span className={`tag ${d.readiness.ready ? 'good' : ''}`}>{n.status !== 'open' ? n.status : d.readiness.ready ? 'ready' : `waiting on ${d.readiness.waitingOn.length}`}</span>}
+        {n.kind === 'task' && (
+          <span className="tag" title="How many tasks (directly or indirectly) need this one">
+            impact {impact.get(id) ?? 0}
+          </span>
+        )}
         <button className={`btn small ${focus === id ? 'on' : ''}`} onClick={() => setFocus(focus === id ? null : id)}>
           <Crosshair size={14} /> {focus === id ? 'Focused' : 'Focus'}
         </button>

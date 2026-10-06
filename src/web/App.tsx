@@ -1,5 +1,6 @@
 import { Crosshair, Undo2, X } from 'lucide-react';
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { impacts } from '../shared/graph';
 import type { Node } from '../shared/model';
 import { api, type GraphData, remember, useLive } from './api';
 import { GraphView } from './Graph';
@@ -8,6 +9,8 @@ import { NodePicker } from './NodePicker';
 interface AppState {
   graph: GraphData;
   byId: Map<string, Node>;
+  /** Per task: how many tasks (transitively) need it. Missing means 0. */
+  impact: Map<string, number>;
   version: number;
   focus: string | null;
   setFocus(id: string | null): void;
@@ -41,6 +44,7 @@ export function App() {
   }, [live.version, kick]);
 
   const byId = useMemo(() => new Map(graph.nodes.map((n) => [n.id, n])), [graph]);
+  const impact = useMemo(() => impacts(graph.edges, byId), [graph, byId]);
   const setFocus = useCallback((id: string | null) => {
     setFocusState(id);
     remember.set('focus', id);
@@ -48,6 +52,7 @@ export function App() {
   const state: AppState = {
     graph,
     byId,
+    impact,
     version: live.version + kick,
     focus: focus && (byId.has(focus) || !graph.nodes.length) ? focus : null,
     setFocus,

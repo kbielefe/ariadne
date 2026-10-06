@@ -48,6 +48,39 @@ export function ancestorTasks(edges: readonly Edge[], taskId: string): string[] 
   return [...r.entries()].sort((a, b) => a[1] - b[1]).map(([id]) => id);
 }
 
+/**
+ * Impact of each task: how many distinct tasks (transitively) need it, not counting itself.
+ * A task nothing needs has impact 0. Done and dropped tasks don't count themselves,
+ * but the walk goes through them, so open tasks that need them still count.
+ */
+export function impacts(edges: readonly Edge[], byId: ReadonlyMap<string, Node>): Map<string, number> {
+  const neededBy = new Map<string, string[]>();
+  const tasks = new Set<string>();
+  for (const e of edges) {
+    if (e.kind !== 'needs') continue;
+    tasks.add(e.src).add(e.dst);
+    const list = neededBy.get(e.dst);
+    if (list) list.push(e.src);
+    else neededBy.set(e.dst, [e.src]);
+  }
+  const out = new Map<string, number>();
+  for (const id of tasks) {
+    const seen = new Set<string>();
+    const stack = [id];
+    while (stack.length)
+      for (const up of neededBy.get(stack.pop()!) ?? [])
+        if (!seen.has(up)) {
+          seen.add(up);
+          stack.push(up);
+        }
+    seen.delete(id);
+    let n = 0;
+    for (const up of seen) if (byId.get(up)?.status === 'open') n++;
+    out.set(id, n);
+  }
+  return out;
+}
+
 /** A task is a root (what v1 called an Outcome) when no task needs it. */
 export function isRoot(edges: readonly Edge[], taskId: string): boolean {
   return !edges.some((e) => e.kind === 'needs' && e.dst === taskId);

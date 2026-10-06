@@ -18,11 +18,12 @@ interface Filters {
   kinds: NodeKind[];
   edges: EdgeKind[];
   showClosed: boolean;
+  showImpact: boolean;
   direction: Direction;
   depth: number;
 }
 
-const DEFAULT_FILTERS: Filters = { kinds: NODE_KINDS, edges: [...EdgeKinds.options], showClosed: false, direction: 'down', depth: 0 };
+const DEFAULT_FILTERS: Filters = { kinds: NODE_KINDS, edges: [...EdgeKinds.options], showClosed: false, showImpact: false, direction: 'down', depth: 0 };
 
 function loadSort(): Sort {
   const s = remember.get('graphSort');
@@ -39,7 +40,7 @@ function loadFilters(): Filters {
 }
 
 export function GraphView({ selected, onSelect }: { selected: string | null; onSelect(id: string | null): void }) {
-  const { graph, byId, focus, setFocus } = useApp();
+  const { graph, byId, impact, focus, setFocus } = useApp();
   const [f, setF] = useState<Filters>(loadFilters);
   const [creating, setCreating] = useState(false);
   const [sort, setSortState] = useState<Sort>(loadSort);
@@ -93,11 +94,14 @@ export function GraphView({ selected, onSelect }: { selected: string | null; onS
         if (!graph.edges.some((e) => e.kind === 'needs' && e.dst === id)) classes.push('root');
       }
       if (id === focus) classes.push('focus');
-      els.push({ group: 'nodes', data: { id, label: n.title.length > 64 ? `${n.title.slice(0, 63)}…` : n.title, title: n.title, order: order.get(id) }, classes: classes.join(' ') });
+      const label = n.title.length > 64 ? `${n.title.slice(0, 63)}…` : n.title;
+      // The canvas draws this as a badge on the node's top-right corner.
+      const badge = f.showImpact && n.kind === 'task' ? (impact.get(id) ?? 0) : undefined;
+      els.push({ group: 'nodes', data: { id, label, title: n.title, order: order.get(id), badge }, classes: classes.join(' ') });
     }
     for (const e of edges) if (ids.has(e.src) && ids.has(e.dst)) els.push({ group: 'edges', data: { id: e.id, source: e.src, target: e.dst, label: e.kind === 'needs' ? '' : EDGE_RULES[e.kind].label, order: order.get(e.dst) }, classes: e.kind });
     return els;
-  }, [graph, byId, f, focus, sort]);
+  }, [graph, byId, impact, f, focus, sort]);
 
   const counts = useMemo(() => ({ shown: elements.filter((e) => e.group === 'nodes').length, total: graph.nodes.length }), [elements, graph]);
 
@@ -114,6 +118,9 @@ export function GraphView({ selected, onSelect }: { selected: string | null; onS
           ))}
           <label className="check">
             <input type="checkbox" checked={f.showClosed} onChange={(e) => update({ showClosed: e.target.checked })} /> done &amp; dropped
+          </label>
+          <label className="check" title="How many tasks (directly or indirectly) need each task">
+            <input type="checkbox" checked={f.showImpact} onChange={(e) => update({ showImpact: e.target.checked })} /> impact on tasks
           </label>
         </fieldset>
         <fieldset>
@@ -332,6 +339,7 @@ function Canvas({ elements, sort, selected, onSelect, onFocus }: { elements: Ele
   const handlers = useRef({ onSelect, onFocus });
   handlers.current = { onSelect, onFocus };
   const shape = useRef('');
+  const badges = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const c = cytoscape({ container: box.current!, style: styles(), wheelSensitivity: 1.5, minZoom: 0.15, maxZoom: 2.5, boxSelectionEnabled: false });
@@ -340,6 +348,8 @@ function Canvas({ elements, sort, selected, onSelect, onFocus }: { elements: Ele
       if (e.target === c) handlers.current.onSelect(null);
     });
     c.on('dbltap', 'node', (e) => handlers.current.onFocus(e.target.id()));
+    // Badges are HTML over the canvas (cytoscape can't draw outside a node); follow every redraw.
+    c.on('render', () => placeBadges(c, badges.current!));
     const mq = matchMedia('(prefers-color-scheme: dark)');
     const restyle = () => c.style(styles());
     mq.addEventListener('change', restyle);
@@ -396,9 +406,32 @@ function Canvas({ elements, sort, selected, onSelect, onFocus }: { elements: Ele
   return (
     <>
       <div ref={box} className="canvas" role="img" aria-label="Graph of tasks, people, teams, and resources" />
+      <div ref={badges} className="badges" aria-hidden />
       <button className="icon fit" aria-label="Fit to screen" onClick={() => cy.current?.animate({ fit: { eles: cy.current.elements(), padding: 30 } }, { duration: 200 })}>
         <Maximize size={16} />
       </button>
     </>
   );
+}
+
+/** One circle per node with a `badge` number, centred on its top-right corner, scaled with the zoom. */
+function placeBadges(c: Cy, layer: HTMLDivElement) {
+  const have = new Map([...layer.children].map((el) => [(el as HTMLElement).dataset.id!, el as HTMLElement]));
+  const zoom = c.zoom();
+  c.nodes().forEach((n) => {
+    const value = n.data('badge') as number | undefined;
+    if (value == null) return;
+    let el = have.get(n.id());
+    if (el) have.delete(n.id());
+    else {
+      el = document.createElement('span');
+      el.className = 'badge';
+      el.dataset.id = n.id();
+      layer.append(el);
+    }
+    if (el.textContent !== String(value)) el.textContent = String(value);
+    const bb = n.renderedBoundingBox({ includeLabels: false, includeOverlays: false });
+    el.style.transform = `translate(${bb.x2}px, ${bb.y1}px) scale(${zoom}) translate(-50%, -50%)`;
+  });
+  for (const el of have.values()) el.remove();
 }
