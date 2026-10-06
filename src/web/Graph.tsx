@@ -8,6 +8,7 @@ import { remember } from './api';
 import { useApp } from './App';
 import { KindIcon } from './bits';
 import { NewNodeForm, NodePanel } from './NodePanel';
+import { type Body, nudgeStep } from './nudge';
 import { NODE_SIZE, placeNew, type View, loadView, saveView } from './placement';
 import { DEFAULT_LAYOUT, isLayout, LAYOUTS, layered, type LayoutEdge, type LayoutName, type LayoutNode, radial } from './layouts';
 import { DEFAULT_SORT, isSort, SORTS, type Sort, sortNodes } from './order';
@@ -187,6 +188,7 @@ export function GraphView({ selected, onSelect }: { selected: string | null; onS
           <label className="check" title={layout === 'layered' ? 'Route edges around the nodes they pass, instead of straight through' : 'Only the layered layout routes edges'}>
             <input type="checkbox" checked={bends} disabled={layout !== 'layered'} onChange={(e) => setBends(e.target.checked)} /> bend edges
           </label>
+          {layout === 'force' && <p className="muted small">Drag a node: linked nodes follow, and nodes in the way move aside.</p>}
         </fieldset>
         <fieldset>
           <legend>
@@ -205,7 +207,7 @@ export function GraphView({ selected, onSelect }: { selected: string | null; onS
         </p>
       </aside>
       <div className="canvas-wrap">
-        <Canvas elements={elements} viewKey={viewKey} arrange={arrangers[layout](focus)} bends={bends && layout === 'layered'} selected={selected} onSelect={onSelect} onFocus={setFocus} />
+        <Canvas elements={elements} viewKey={viewKey} arrange={arrangers[layout](focus)} bends={bends && layout === 'layered'} nudge={layout === 'force'} selected={selected} onSelect={onSelect} onFocus={setFocus} />
         <div className="canvas-tools">
           <button className="btn icon-btn" aria-label={panes.filters ? 'Hide filters' : 'Show filters'} aria-pressed={panes.filters} title={panes.filters ? 'Hide filters' : 'Show filters'} onClick={() => setPane({ filters: !panes.filters })}>
             {panes.filters ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}
@@ -425,12 +427,22 @@ function drawBends(c: Cy, v: View | undefined, on: boolean) {
   );
 }
 
-function Canvas(p: { elements: ElementDefinition[]; viewKey: string; arrange: Arrange; bends: boolean; selected: string | null; onSelect(id: string | null): void; onFocus(id: string): void }) {
+interface Nudging {
+  held: string;
+  bodies: Map<string, Body>;
+  edges: { src: string; dst: string }[];
+  touched: Set<string>;
+  released: boolean;
+  after: number;
+  raf: number;
+}
+
+function Canvas(p: { elements: ElementDefinition[]; viewKey: string; arrange: Arrange; bends: boolean; nudge: boolean; selected: string | null; onSelect(id: string | null): void; onFocus(id: string): void }) {
   const { elements, viewKey, selected, bends } = p;
   const box = useRef<HTMLDivElement>(null);
   const cy = useRef<Cy | null>(null);
-  const handlers = useRef({ onSelect: p.onSelect, onFocus: p.onFocus, arrange: p.arrange, bends: p.bends });
-  handlers.current = { onSelect: p.onSelect, onFocus: p.onFocus, arrange: p.arrange, bends: p.bends };
+  const handlers = useRef({ onSelect: p.onSelect, onFocus: p.onFocus, arrange: p.arrange, bends: p.bends, nudge: p.nudge });
+  handlers.current = { onSelect: p.onSelect, onFocus: p.onFocus, arrange: p.arrange, bends: p.bends, nudge: p.nudge };
   // The arrangement on screen; nodes keep these positions until the view changes or you re-arrange.
   const view = useRef<{ key: string; v: View } | null>(null);
   const runs = useRef(0);
@@ -446,18 +458,57 @@ function Canvas(p: { elements: ElementDefinition[]; viewKey: string; arrange: Ar
     });
     c.on('dbltap', 'node', (e) => handlers.current.onFocus(e.target.id()));
     // A node you drag stays where you put it. Its edges forget their bends, which no longer fit.
+    let nudging: Nudging | null = null;
+    // Remember where the nudged nodes are now (on release, and again once they settle).
+    const keep = () => {
+      const cur = view.current;
+      if (!cur || !nudging) return;
+      for (const id of nudging.touched) cur.v.pos.set(id, { ...c.getElementById(id).position() });
+      saveView(cur.key, cur.v);
+    };
+    const finish = () => {
+      if (!nudging) return;
+      cancelAnimationFrame(nudging.raf);
+      keep();
+      nudging = null;
+    };
+    // Force layout: each frame, followers and bumped nodes take one step; after you let go, they settle.
+    const tick = () => {
+      const s = nudging!;
+      const held = c.getElementById(s.held);
+      if (held.empty()) return finish();
+      Object.assign(s.bodies.get(s.held)!, held.position());
+      const { moved, most } = nudgeStep(s.bodies, s.edges, s.held, { edge: FORCE_EDGE });
+      c.batch(() => {
+        for (const id of moved) {
+          const b = s.bodies.get(id)!;
+          c.getElementById(id).position({ x: b.x, y: b.y });
+          s.touched.add(id);
+        }
+      });
+      if (s.released && (most < 0.3 || ++s.after > 90)) return finish();
+      s.raf = requestAnimationFrame(tick);
+    };
     c.on('drag', 'node', (e) => {
+      const id = e.target.id() as string;
       const cur = view.current;
       const bent = e.target.connectedEdges().filter((x: cytoscape.EdgeSingular) => cur?.v.bends?.has(x.id()));
       if (bent.nonempty()) {
         bent.forEach((x: cytoscape.EdgeSingular) => void cur!.v.bends!.delete(x.id()));
         bent.removeStyle(BEND_STYLE);
       }
+      if (!handlers.current.nudge || nudging?.held === id) return;
+      finish();
+      const bodies = new Map(c.nodes().map((n) => [n.id(), { ...n.position(), ...NODE_SIZE[kindOf(n)], vx: 0, vy: 0 }]));
+      const edges = c.edges().map((x) => ({ src: x.data('source') as string, dst: x.data('target') as string }));
+      nudging = { held: id, bodies, edges, touched: new Set(), released: false, after: 0, raf: requestAnimationFrame(tick) };
     });
     c.on('dragfree', 'node', (e) => {
+      if (nudging && nudging.held === e.target.id()) nudging.released = true;
       if (!view.current) return;
       view.current.v.pos.set(e.target.id(), { ...e.target.position() });
-      saveView(view.current.key, view.current.v);
+      if (nudging) keep();
+      else saveView(view.current.key, view.current.v);
     });
     // Badges are HTML over the canvas (cytoscape can't draw outside a node); follow every redraw.
     c.on('render', () => placeBadges(c, badges.current!));
@@ -468,6 +519,7 @@ function Canvas(p: { elements: ElementDefinition[]; viewKey: string; arrange: Ar
     const ro = new ResizeObserver(() => c.resize());
     ro.observe(box.current!);
     return () => {
+      finish();
       ro.disconnect();
       mq.removeEventListener('change', restyle);
       c.destroy();
