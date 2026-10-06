@@ -1,5 +1,6 @@
 import cytoscape, { type Core as Cy, type ElementDefinition } from 'cytoscape';
-import { ArrowDownUp, Crosshair, Expand, Maximize, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Plus, RefreshCw } from 'lucide-react';
+import fcose from 'cytoscape-fcose';
+import { ArrowDownUp, Crosshair, Expand, Maximize, Network, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Plus, RefreshCw } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { type Direction, readiness, reachable } from '../shared/graph';
 import { EDGE_RULES, type EdgeKind, EdgeKind as EdgeKinds, type NodeKind } from '../shared/model';
@@ -8,8 +9,10 @@ import { useApp } from './App';
 import { KindIcon } from './bits';
 import { NewNodeForm, NodePanel } from './NodePanel';
 import { NODE_SIZE, placeNew, type Pos, type View, loadView, saveView } from './placement';
-import { layered, type LayoutEdge, type LayoutNode } from './layouts';
+import { DEFAULT_LAYOUT, isLayout, LAYOUTS, layered, type LayoutEdge, type LayoutName, type LayoutNode, radial } from './layouts';
 import { DEFAULT_SORT, isSort, SORTS, type Sort, sortNodes } from './order';
+
+cytoscape.use(fcose);
 
 const NODE_KINDS: NodeKind[] = ['task', 'person', 'team', 'resource'];
 
@@ -29,6 +32,11 @@ function loadSort(): Sort {
   return isSort(s) ? s : DEFAULT_SORT;
 }
 
+function loadLayout(): LayoutName {
+  const s = remember.get('graphLayout');
+  return isLayout(s) ? s : DEFAULT_LAYOUT;
+}
+
 function loadFilters(): Filters {
   try {
     const f: Filters = { ...DEFAULT_FILTERS, ...JSON.parse(remember.get('graphFilters') ?? '{}') };
@@ -46,6 +54,11 @@ export function GraphView({ selected, onSelect }: { selected: string | null; onS
   const setSort = (x: Sort) => {
     setSortState(x);
     remember.set('graphSort', x);
+  };
+  const [layout, setLayoutState] = useState<LayoutName>(loadLayout);
+  const setLayout = (x: LayoutName) => {
+    setLayoutState(x);
+    remember.set('graphLayout', x);
   };
   const [panes, setPanes] = useState<Panes>(() => {
     try {
@@ -103,7 +116,7 @@ export function GraphView({ selected, onSelect }: { selected: string | null; onS
   }, [graph, byId, impact, f, focus, sort]);
 
   // Each view remembers its own arrangement.
-  const viewKey = [sort, focus ?? '', focus ? `${f.direction}${f.depth}` : ''].join('|');
+  const viewKey = [layout, sort, focus ?? '', focus ? `${f.direction}${f.depth}` : ''].join('|');
 
   const counts = useMemo(() => ({ shown: elements.filter((e) => e.group === 'nodes').length, total: graph.nodes.length }), [elements, graph]);
 
@@ -153,6 +166,18 @@ export function GraphView({ selected, onSelect }: { selected: string | null; onS
         </fieldset>
         <fieldset>
           <legend>
+            <Network size={12} /> Layout
+          </legend>
+          <select value={layout} onChange={(e) => setLayout(e.target.value as LayoutName)} aria-label="Layout">
+            {Object.entries(LAYOUTS).map(([k, label]) => (
+              <option key={k} value={k}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </fieldset>
+        <fieldset>
+          <legend>
             <ArrowDownUp size={12} /> Order
           </legend>
           <select value={sort} onChange={(e) => setSort(e.target.value as Sort)} aria-label="Order of nodes side by side">
@@ -168,7 +193,7 @@ export function GraphView({ selected, onSelect }: { selected: string | null; onS
         </p>
       </aside>
       <div className="canvas-wrap">
-        <Canvas elements={elements} viewKey={viewKey} arrange={arrangeLayered} selected={selected} onSelect={onSelect} onFocus={setFocus} />
+        <Canvas elements={elements} viewKey={viewKey} arrange={arrangers[layout](focus)} selected={selected} onSelect={onSelect} onFocus={setFocus} />
         <div className="canvas-tools">
           <button className="btn icon-btn" aria-label={panes.filters ? 'Hide filters' : 'Show filters'} aria-pressed={panes.filters} title={panes.filters ? 'Hide filters' : 'Show filters'} onClick={() => setPane({ filters: !panes.filters })}>
             {panes.filters ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}
@@ -346,9 +371,24 @@ function layoutInput(c: Cy): { nodes: LayoutNode[]; edges: LayoutEdge[] } {
   };
 }
 
-const arrangeLayered: Arrange = (c) => {
-  const { nodes, edges } = layoutInput(c);
-  return layered(nodes, edges);
+const FORCE_EDGE = NODE_SIZE.task.w;
+
+const arrangers: Record<LayoutName, (focus: string | null) => Arrange> = {
+  layered: () => (c) => {
+    const { nodes, edges } = layoutInput(c);
+    return layered(nodes, edges);
+  },
+  radial: (focus) => async (c) => {
+    const { nodes, edges } = layoutInput(c);
+    return radial(nodes, edges, focus);
+  },
+  // fcose moves the nodes itself; read back where they went.
+  force: () => (c) =>
+    new Promise((resolve) => {
+      const l = c.layout({ name: 'fcose', quality: 'proof', randomize: true, animate: false, fit: false, nodeDimensionsIncludeLabels: false, idealEdgeLength: FORCE_EDGE, nodeRepulsion: 20000, nodeSeparation: 60, packComponents: true } as cytoscape.LayoutOptions);
+      l.one('layoutstop', () => resolve({ flow: { x: 0, y: FORCE_EDGE }, pos: new Map(c.nodes().map((n) => [n.id(), { ...n.position() }])) }));
+      l.run();
+    }),
 };
 
 function fitView(c: Cy) {
@@ -438,13 +478,16 @@ function Canvas(p: { elements: ElementDefinition[]; viewKey: string; arrange: Ar
 
     const forced = rearranged !== handled.current;
     handled.current = rearranged;
-    if (!forced && view.current?.key === viewKey) {
-      placeRest(view.current);
+    const ids = [...want.values()].filter((e) => e.group === 'nodes');
+    // Nothing to draw yet (say, still loading): arrange once there is.
+    if (!ids.length) return;
+    const cur = view.current;
+    if (!forced && cur?.key === viewKey && ids.some((e) => cur.v.pos.has(e.data.id!))) {
+      placeRest(cur);
       return;
     }
     // A new view: use what it remembers if that covers most of it, otherwise lay it out.
     const saved = forced ? null : loadView(viewKey);
-    const ids = [...want.values()].filter((e) => e.group === 'nodes');
     if (saved && ids.filter((e) => saved.pos.has(e.data.id!)).length * 2 >= ids.length) {
       view.current = { key: viewKey, v: saved };
       placeRest(view.current);

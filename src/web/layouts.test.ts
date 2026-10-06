@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { EdgeKind, NodeKind } from '../shared/model';
-import { layered, type LayoutEdge, type LayoutNode, rankDir } from './layouts';
+import { layered, type LayoutEdge, type LayoutNode, radial, rankDir } from './layouts';
 import { NODE_SIZE, type Pos } from './placement';
 
 const n = (id: string, order: number, kind: NodeKind = 'task'): LayoutNode => ({ id, kind, order });
@@ -73,5 +73,33 @@ describe('layered', () => {
     const nodes = [n('t', 0), n('ann', 1, 'person'), n('boss', 2, 'person')];
     const { pos } = await layered(nodes, [e('t', 'ann', 'involves'), e('ann', 'boss', 'reports_to')]);
     expect(pos.get('boss')!.x).toBeGreaterThan(pos.get('ann')!.x);
+  });
+});
+
+describe('radial', () => {
+  const dist = (p: Pos) => Math.hypot(p.x, p.y);
+
+  it('puts the focus in the middle and each step out on its own ring', () => {
+    const nodes = [n('f', 0), n('a', 1), n('b', 2), n('c', 3), n('far', 4)];
+    const { pos } = radial(nodes, [e('f', 'a'), e('f', 'b'), e('c', 'f'), e('a', 'far')], 'f');
+    expect(pos.get('f')).toEqual({ x: 0, y: 0 });
+    const r1 = ['a', 'b', 'c'].map((id) => dist(pos.get(id)!));
+    expect(Math.max(...r1) - Math.min(...r1)).toBeLessThan(1e-6);
+    expect(dist(pos.get('far')!)).toBeGreaterThan(r1[0]!);
+  });
+
+  it('centres on the tops without a focus, and puts unreachable nodes outside', () => {
+    const nodes = [n('top', 0), n('kid', 1), n('alone', 2, 'person'), n('boss', 3, 'person'), n('dev', 4, 'person')];
+    const { pos } = radial(nodes, [e('top', 'kid'), e('dev', 'boss', 'reports_to')], null);
+    // tops: top, alone, boss (nothing above them); kid and dev a ring further out
+    for (const id of ['kid', 'dev']) expect(dist(pos.get(id)!)).toBeGreaterThan(dist(pos.get('top')!));
+  });
+
+  it('never overlaps nodes, even crowded rings', () => {
+    const nodes = [n('f', 0), ...[...Array(30).keys()].map((i) => n(`k${i}`, i + 1)), ...[...Array(40).keys()].map((i) => n(`g${i}`, i + 31))];
+    const edges = [...[...Array(30).keys()].map((i) => e('f', `k${i}`)), ...[...Array(40).keys()].map((i) => e(`k${i % 30}`, `g${i}`))];
+    const { pos } = radial(nodes, edges, 'f');
+    const ps = [...pos.values()];
+    for (const a of ps) for (const b of ps) if (a !== b) expect(overlap(a, b)).toBe(false);
   });
 });

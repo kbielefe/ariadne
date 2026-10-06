@@ -1,7 +1,16 @@
 // Layouts for the graph view, as pure functions from nodes and edges to positions.
-import ELK, { type ElkNode } from 'elkjs/lib/elk.bundled.js';
+import type { ELK, ElkNode } from 'elkjs/lib/elk.bundled.js';
 import type { EdgeKind, NodeKind } from '../shared/model';
 import { NODE_SIZE, type Pos, type View } from './placement';
+
+export const LAYOUTS = {
+  layered: 'Layered',
+  radial: 'Radial',
+  force: 'Force',
+} as const;
+export type LayoutName = keyof typeof LAYOUTS;
+export const DEFAULT_LAYOUT: LayoutName = 'layered';
+export const isLayout = (s: unknown): s is LayoutName => typeof s === 'string' && Object.hasOwn(LAYOUTS, s);
 
 export interface LayoutNode {
   id: string;
@@ -22,7 +31,9 @@ const LANE_GAP = 60;
 /** Wide graphs read better left to right: a fan of many children becomes a tall column. */
 export const rankDir = (nodeCount: number): 'TB' | 'LR' => (nodeCount > 10 ? 'LR' : 'TB');
 
-const elk = new ELK();
+// ELK is big; load it the first time something is laid out.
+let elk: Promise<ELK> | null = null;
+const getElk = () => (elk ??= import('elkjs/lib/elk.bundled.js').then((m) => new m.default()));
 
 /** ELK layered positions (centres) for these nodes and edges, keeping the given order where it adds no crossings. */
 async function elkLayered(nodes: readonly LayoutNode[], edges: readonly LayoutEdge[], dir: 'TB' | 'LR'): Promise<Map<string, Pos>> {
@@ -44,7 +55,7 @@ async function elkLayered(nodes: readonly LayoutNode[], edges: readonly LayoutEd
     children: [...nodes].sort(byOrder((n) => n.order)).map((n) => ({ id: n.id, width: NODE_SIZE[n.kind].w, height: NODE_SIZE[n.kind].h })),
     edges: [...edges].sort(byOrder((e) => order.get(e.src)! * nodes.length + order.get(e.dst)!)).map((e, i) => ({ id: `e${i}`, sources: [e.src], targets: [e.dst] })),
   };
-  const out = await elk.layout(graph);
+  const out = await (await getElk()).layout(graph);
   return new Map((out.children ?? []).map((c) => [c.id, { x: c.x! + c.width! / 2, y: c.y! + c.height! / 2 }]));
 }
 
@@ -104,6 +115,66 @@ export async function layered(nodes: readonly LayoutNode[], edges: readonly Layo
     const dSide = edge + LANE_GAP - min(side);
     const dRank = top - min(rank);
     for (const [id, p] of sub) pos.set(id, { [side]: p[side] + dSide, [rank]: p[rank] + dRank } as unknown as Pos);
+  }
+  return { flow, pos };
+}
+
+const RING_GAP = 40;
+
+/**
+ * Rings around a centre: the focus if there is one, otherwise the tops of the graph
+ * (tasks nothing needs, or managers and teams). Each ring is one step further away, by any edge.
+ * Nodes in a ring follow their nearest inner neighbour around the circle, then the sort.
+ */
+export function radial(nodes: readonly LayoutNode[], edges: readonly LayoutEdge[], focus: string | null): View {
+  const step = NODE_SIZE.task.w + RING_GAP;
+  const flow = { x: 0, y: step };
+  if (!nodes.length) return { flow, pos: new Map() };
+  const sorted = [...nodes].sort((a, b) => a.order - b.order);
+  const ids = new Set(nodes.map((n) => n.id));
+  const shown = edges.filter((e) => ids.has(e.src) && ids.has(e.dst));
+  const below = new Set(shown.map(downward).map((e) => e.dst));
+  const tops = focus && ids.has(focus) ? [focus] : sorted.filter((n) => !below.has(n.id)).map((n) => n.id);
+  const centre = tops.length ? tops : [sorted[0]!.id];
+
+  // Rings by breadth-first distance; whatever can't be reached goes on one more ring outside.
+  const near = new Map<string, string[]>();
+  for (const e of shown) {
+    near.set(e.src, [...(near.get(e.src) ?? []), e.dst]);
+    near.set(e.dst, [...(near.get(e.dst) ?? []), e.src]);
+  }
+  const ring = new Map(centre.map((id) => [id, 0]));
+  for (let frontier = centre, d = 1; frontier.length; d++) {
+    const next = frontier.flatMap((id) => (near.get(id) ?? []).filter((x) => !ring.has(x)));
+    for (const id of next) ring.set(id, d);
+    frontier = [...new Set(next)];
+  }
+  const outer = Math.max(...ring.values()) + 1;
+  for (const n of sorted) if (!ring.has(n.id)) ring.set(n.id, outer);
+
+  const pos = new Map<string, Pos>();
+  const angle = new Map<string, number>();
+  let radius = 0;
+  for (let r = 0; r <= outer; r++) {
+    const here = sorted.filter((n) => ring.get(n.id) === r);
+    if (!here.length) continue;
+    // Follow the inner neighbours around: the circular mean of their angles.
+    const at = (n: LayoutNode) => {
+      const inner = (near.get(n.id) ?? []).filter((x) => angle.has(x)).map((x) => angle.get(x)!);
+      if (!inner.length) return Infinity;
+      const a = Math.atan2(inner.reduce((s, t) => s + Math.sin(t), 0), inner.reduce((s, t) => s + Math.cos(t), 0));
+      return a < -Math.PI / 2 ? a + 2 * Math.PI : a;
+    };
+    const keyed = here.map((n) => ({ n, a: at(n) })).sort((p, q) => p.a - q.a || p.n.order - q.n.order);
+    // Far enough out that neighbours on the circle don't touch, and at least a step past the last ring.
+    const fit = here.length > 1 ? step / (2 * Math.sin(Math.PI / here.length)) : 0;
+    radius = r === 0 && here.length === 1 ? 0 : Math.max(fit, r === 0 ? 0 : radius + step);
+    // Start at the top and go clockwise.
+    keyed.forEach(({ n }, i) => {
+      const t = -Math.PI / 2 + (2 * Math.PI * i) / here.length;
+      angle.set(n.id, t);
+      pos.set(n.id, radius ? { x: radius * Math.cos(t), y: radius * Math.sin(t) } : { x: 0, y: 0 });
+    });
   }
   return { flow, pos };
 }
