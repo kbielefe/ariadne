@@ -1,6 +1,6 @@
 import cytoscape, { type Core as Cy, type ElementDefinition } from 'cytoscape';
 import dagre from 'cytoscape-dagre';
-import { ArrowDownUp, Crosshair, Expand, Maximize, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Plus } from 'lucide-react';
+import { ArrowDownUp, Crosshair, Expand, Maximize, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Plus, RefreshCw } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { type Direction, readiness, reachable } from '../shared/graph';
 import { EDGE_RULES, type EdgeKind, EdgeKind as EdgeKinds, type NodeKind } from '../shared/model';
@@ -8,7 +8,8 @@ import { remember } from './api';
 import { useApp } from './App';
 import { KindIcon } from './bits';
 import { NewNodeForm, NodePanel } from './NodePanel';
-import { DEFAULT_SORT, isSort, layoutOptions, orderLeafSiblings, rankDir, SORTS, type Sort, sortNodes } from './order';
+import { NODE_SIZE, placeNew, type Pos, type View, loadView, saveView } from './placement';
+import { DEFAULT_SORT, isSort, layoutOptions, orderLeafSiblings, RANK_SEP, rankDir, SORTS, type Sort, sortNodes } from './order';
 
 cytoscape.use(dagre);
 
@@ -103,6 +104,9 @@ export function GraphView({ selected, onSelect }: { selected: string | null; onS
     return els;
   }, [graph, byId, impact, f, focus, sort]);
 
+  // Each view remembers its own arrangement.
+  const viewKey = [sort, focus ?? '', focus ? `${f.direction}${f.depth}` : ''].join('|');
+
   const counts = useMemo(() => ({ shown: elements.filter((e) => e.group === 'nodes').length, total: graph.nodes.length }), [elements, graph]);
 
   return (
@@ -166,7 +170,7 @@ export function GraphView({ selected, onSelect }: { selected: string | null; onS
         </p>
       </aside>
       <div className="canvas-wrap">
-        <Canvas elements={elements} sort={sort} selected={selected} onSelect={onSelect} onFocus={setFocus} />
+        <Canvas elements={elements} viewKey={viewKey} arrange={arrangeLayered} selected={selected} onSelect={onSelect} onFocus={setFocus} />
         <div className="canvas-tools">
           <button className="btn icon-btn" aria-label={panes.filters ? 'Hide filters' : 'Show filters'} aria-pressed={panes.filters} title={panes.filters ? 'Hide filters' : 'Show filters'} onClick={() => setPane({ filters: !panes.filters })}>
             {panes.filters ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}
@@ -295,8 +299,8 @@ function styles(): cytoscape.StylesheetJson {
         'background-color': surface,
         'border-width': 1.5,
         'border-color': line,
-        width: 180,
-        height: 52,
+        width: NODE_SIZE.task.w,
+        height: NODE_SIZE.task.h,
         shape: 'round-rectangle',
       },
     },
@@ -305,9 +309,9 @@ function styles(): cytoscape.StylesheetJson {
     { selector: 'node.task.root', style: { 'font-weight': 'bold', 'border-width': 3 } },
     { selector: 'node.task.done, node.task.dropped', style: { color: muted, opacity: 0.6 } },
     { selector: 'node.task.dropped', style: { 'text-decoration': 'line-through' } as never },
-    { selector: 'node.person', style: { shape: 'ellipse', width: 120, 'background-color': css('--person', '#eef2ff') } },
-    { selector: 'node.team', style: { shape: 'octagon', width: 130, 'background-color': css('--team', '#fef3c7') } },
-    { selector: 'node.resource', style: { shape: 'tag', width: 140, 'background-color': css('--resource', '#f3f4f6') } },
+    { selector: 'node.person', style: { shape: 'ellipse', width: NODE_SIZE.person.w, 'background-color': css('--person', '#eef2ff') } },
+    { selector: 'node.team', style: { shape: 'octagon', width: NODE_SIZE.team.w, 'background-color': css('--team', '#fef3c7') } },
+    { selector: 'node.resource', style: { shape: 'tag', width: NODE_SIZE.resource.w, 'background-color': css('--resource', '#f3f4f6') } },
     { selector: 'node.focus', style: { 'border-color': accent, 'border-width': 4 } },
     { selector: 'node:selected', style: { 'overlay-color': accent, 'overlay-opacity': 0.15, 'overlay-padding': 6 } },
     {
@@ -333,12 +337,40 @@ function styles(): cytoscape.StylesheetJson {
   ];
 }
 
-function Canvas({ elements, sort, selected, onSelect, onFocus }: { elements: ElementDefinition[]; sort: Sort; selected: string | null; onSelect(id: string | null): void; onFocus(id: string): void }) {
+/** Lays out every node from scratch and returns where they go. */
+type Arrange = (c: Cy) => Promise<View>;
+
+const arrangeLayered: Arrange = async (c) => {
+  const n = c.nodes().length;
+  const dir = rankDir(n);
+  c.layout({ ...layoutOptions(n), fit: false } as cytoscape.LayoutOptions).run();
+  orderLeafSiblings(c.nodes(), dir);
+  return {
+    flow: dir === 'LR' ? { x: NODE_SIZE.task.w + RANK_SEP, y: 0 } : { x: 0, y: NODE_SIZE.task.h + RANK_SEP },
+    pos: new Map(c.nodes().map((x) => [x.id(), { ...x.position() }])),
+  };
+};
+
+function fitView(c: Cy) {
+  c.fit(undefined, 30);
+  // A handful of nodes shouldn't fill the screen.
+  if (c.zoom() > 1.1) {
+    c.zoom(1.1);
+    c.center();
+  }
+}
+
+function Canvas(p: { elements: ElementDefinition[]; viewKey: string; arrange: Arrange; selected: string | null; onSelect(id: string | null): void; onFocus(id: string): void }) {
+  const { elements, viewKey, selected } = p;
   const box = useRef<HTMLDivElement>(null);
   const cy = useRef<Cy | null>(null);
-  const handlers = useRef({ onSelect, onFocus });
-  handlers.current = { onSelect, onFocus };
-  const shape = useRef('');
+  const handlers = useRef({ onSelect: p.onSelect, onFocus: p.onFocus, arrange: p.arrange });
+  handlers.current = { onSelect: p.onSelect, onFocus: p.onFocus, arrange: p.arrange };
+  // The arrangement on screen; nodes keep these positions until the view changes or you re-arrange.
+  const view = useRef<{ key: string; v: View } | null>(null);
+  const runs = useRef(0);
+  const [rearranged, setRearranged] = useState(0);
+  const handled = useRef(0);
   const badges = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -348,6 +380,12 @@ function Canvas({ elements, sort, selected, onSelect, onFocus }: { elements: Ele
       if (e.target === c) handlers.current.onSelect(null);
     });
     c.on('dbltap', 'node', (e) => handlers.current.onFocus(e.target.id()));
+    // A node you drag stays where you put it.
+    c.on('dragfree', 'node', (e) => {
+      if (!view.current) return;
+      view.current.v.pos.set(e.target.id(), { ...e.target.position() });
+      saveView(view.current.key, view.current.v);
+    });
     // Badges are HTML over the canvas (cytoscape can't draw outside a node); follow every redraw.
     c.on('render', () => placeBadges(c, badges.current!));
     const mq = matchMedia('(prefers-color-scheme: dark)');
@@ -363,7 +401,7 @@ function Canvas({ elements, sort, selected, onSelect, onFocus }: { elements: Ele
     };
   }, []);
 
-  // Patch elements in place; lay out again only when the set of nodes or edges changes.
+  // Patch elements in place, then position only what needs it.
   useEffect(() => {
     const c = cy.current!;
     const want = new Map(elements.map((e) => [e.data.id!, e]));
@@ -379,23 +417,49 @@ function Canvas({ elements, sort, selected, onSelect, onFocus }: { elements: Ele
         } else c.add(e);
       }
     });
-    // Changing the sort lays out again; edits that only move a node in the sort don't.
-    const key = `${sort}|${elements.map((e) => e.data.id).sort().join(',')}`;
-    if (key !== shape.current) {
-      shape.current = key;
-      const n = c.nodes().length;
-      const layout = c.layout(layoutOptions(n));
-      layout.one('layoutstop', () => {
-        orderLeafSiblings(c.nodes(), rankDir(n));
-        // A handful of nodes shouldn't fill the screen.
-        if (c.zoom() > 1.1) {
-          c.zoom(1.1);
-          c.center();
-        }
-      });
-      layout.run();
+    const apply = (pos: ReadonlyMap<string, Pos>) =>
+      c.batch(() =>
+        c.nodes().forEach((n) => {
+          const at = pos.get(n.id());
+          if (at) n.position({ ...at });
+        }),
+      );
+    // Nodes this view hasn't placed yet go beside their neighbours.
+    const placeRest = (cur: { key: string; v: View }) => {
+      const ids = c.nodes().map((n) => n.id());
+      const edges = c.edges().map((e) => ({ src: e.data('source') as string, dst: e.data('target') as string }));
+      const size = (id: string) => NODE_SIZE[kindOf(c.getElementById(id))];
+      const visible = new Map([...cur.v.pos].filter(([id]) => want.has(id)));
+      const added = placeNew(ids, edges, visible, size, cur.v.flow);
+      for (const [id, at] of added) cur.v.pos.set(id, at);
+      apply(cur.v.pos);
+      if (added.size) saveView(cur.key, cur.v);
+    };
+
+    const forced = rearranged !== handled.current;
+    handled.current = rearranged;
+    if (!forced && view.current?.key === viewKey) {
+      placeRest(view.current);
+      return;
     }
-  }, [elements, sort]);
+    // A new view: use what it remembers if that covers most of it, otherwise lay it out.
+    const saved = forced ? null : loadView(viewKey);
+    const ids = [...want.values()].filter((e) => e.group === 'nodes');
+    if (saved && ids.filter((e) => saved.pos.has(e.data.id!)).length * 2 >= ids.length) {
+      view.current = { key: viewKey, v: saved };
+      placeRest(view.current);
+      fitView(c);
+      return;
+    }
+    const run = ++runs.current;
+    void handlers.current.arrange(c).then((v) => {
+      if (run !== runs.current) return;
+      view.current = { key: viewKey, v };
+      apply(v.pos);
+      saveView(viewKey, v);
+      fitView(c);
+    });
+  }, [elements, viewKey, rearranged]);
 
   useEffect(() => {
     const c = cy.current!;
@@ -407,12 +471,19 @@ function Canvas({ elements, sort, selected, onSelect, onFocus }: { elements: Ele
     <>
       <div ref={box} className="canvas" role="img" aria-label="Graph of tasks, people, teams, and resources" />
       <div ref={badges} className="badges" aria-hidden />
-      <button className="icon fit" aria-label="Fit to screen" onClick={() => cy.current?.animate({ fit: { eles: cy.current.elements(), padding: 30 } }, { duration: 200 })}>
-        <Maximize size={16} />
-      </button>
+      <div className="canvas-view-tools">
+        <button className="icon" aria-label="Re-arrange" title="Re-arrange: lay this view out from scratch, forgetting where nodes were" onClick={() => setRearranged((x) => x + 1)}>
+          <RefreshCw size={16} />
+        </button>
+        <button className="icon" aria-label="Fit to screen" title="Fit to screen" onClick={() => cy.current?.animate({ fit: { eles: cy.current.elements(), padding: 30 } }, { duration: 200 })}>
+          <Maximize size={16} />
+        </button>
+      </div>
     </>
   );
 }
+
+const kindOf = (n: cytoscape.NodeSingular): NodeKind => NODE_KINDS.find((k) => n.hasClass(k)) ?? 'task';
 
 /** One circle per node with a `badge` number, centred on its top-right corner, scaled with the zoom. */
 function placeBadges(c: Cy, layer: HTMLDivElement) {

@@ -38,6 +38,8 @@ export function sortNodes(nodes: readonly Node[], sort: Sort, edges: readonly Ed
 /** Wide graphs read better left to right: a fan of many children becomes a tall column. */
 export const rankDir = (nodeCount: number): 'TB' | 'LR' => (nodeCount > 10 ? 'LR' : 'TB');
 
+export const RANK_SEP = 90;
+
 /**
  * dagre options for the graph view. Every element carries `data.order` (its position in the sort).
  * dagre places siblings in the reverse of the order it receives them, so feed them reversed.
@@ -48,7 +50,7 @@ export function layoutOptions(nodeCount: number): LayoutOptions {
     name: 'dagre',
     rankDir: rankDir(nodeCount),
     nodeSep: 14,
-    rankSep: 90,
+    rankSep: RANK_SEP,
     animate: false,
     fit: true,
     padding: 30,

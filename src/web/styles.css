@@ -426,10 +426,14 @@ code,
   display: flex;
   gap: 8px;
 }
-.fit {
+.canvas-view-tools {
   position: absolute;
   right: 12px;
   bottom: 12px;
+  display: flex;
+  gap: 6px;
+}
+.canvas-view-tools > button {
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 8px;
