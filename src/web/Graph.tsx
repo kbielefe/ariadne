@@ -1,5 +1,4 @@
 import cytoscape, { type Core as Cy, type ElementDefinition } from 'cytoscape';
-import dagre from 'cytoscape-dagre';
 import { ArrowDownUp, Crosshair, Expand, Maximize, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Plus, RefreshCw } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { type Direction, readiness, reachable } from '../shared/graph';
@@ -9,9 +8,8 @@ import { useApp } from './App';
 import { KindIcon } from './bits';
 import { NewNodeForm, NodePanel } from './NodePanel';
 import { NODE_SIZE, placeNew, type Pos, type View, loadView, saveView } from './placement';
-import { DEFAULT_SORT, isSort, layoutOptions, orderLeafSiblings, RANK_SEP, rankDir, SORTS, type Sort, sortNodes } from './order';
-
-cytoscape.use(dagre);
+import { layered, type LayoutEdge, type LayoutNode } from './layouts';
+import { DEFAULT_SORT, isSort, SORTS, type Sort, sortNodes } from './order';
 
 const NODE_KINDS: NodeKind[] = ['task', 'person', 'team', 'resource'];
 
@@ -340,15 +338,17 @@ function styles(): cytoscape.StylesheetJson {
 /** Lays out every node from scratch and returns where they go. */
 type Arrange = (c: Cy) => Promise<View>;
 
-const arrangeLayered: Arrange = async (c) => {
-  const n = c.nodes().length;
-  const dir = rankDir(n);
-  c.layout({ ...layoutOptions(n), fit: false } as cytoscape.LayoutOptions).run();
-  orderLeafSiblings(c.nodes(), dir);
+/** What a layout needs to know about the drawn graph. */
+function layoutInput(c: Cy): { nodes: LayoutNode[]; edges: LayoutEdge[] } {
   return {
-    flow: dir === 'LR' ? { x: NODE_SIZE.task.w + RANK_SEP, y: 0 } : { x: 0, y: NODE_SIZE.task.h + RANK_SEP },
-    pos: new Map(c.nodes().map((x) => [x.id(), { ...x.position() }])),
+    nodes: c.nodes().map((n) => ({ id: n.id(), kind: kindOf(n), order: n.data('order') as number })),
+    edges: c.edges().map((e) => ({ src: e.data('source') as string, dst: e.data('target') as string, kind: e.classes()[0] as EdgeKind })),
   };
+}
+
+const arrangeLayered: Arrange = (c) => {
+  const { nodes, edges } = layoutInput(c);
+  return layered(nodes, edges);
 };
 
 function fitView(c: Cy) {
