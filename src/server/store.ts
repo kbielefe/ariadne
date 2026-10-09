@@ -48,8 +48,9 @@ export function mapEdge(r: Record<string, unknown>): Edge {
 
 // ---------------------------------------------------------------- reads
 
-export async function getNode(q: Q, id: string): Promise<Node> {
-  const r = await q.query('SELECT * FROM nodes WHERE id = $1', [id]);
+/** `lock` holds the row until the transaction ends, so a read-modify-write (like a body patch) can't lose a concurrent change. */
+export async function getNode(q: Q, id: string, o: { lock?: boolean } = {}): Promise<Node> {
+  const r = await q.query(`SELECT * FROM nodes WHERE id = $1${o.lock ? ' FOR UPDATE' : ''}`, [id]);
   if (!r.rows[0]) throw new NotFound(`No node ${id}`);
   return mapNode(r.rows[0]);
 }

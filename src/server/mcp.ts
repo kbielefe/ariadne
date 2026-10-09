@@ -38,6 +38,8 @@ Titles and bodies: prefix titles with the repo or area ("PDP CI: ...") and name 
 What/Why, then **Done when:**. Keep one "**Status (YYYY-MM-DD):**" line for where it stands now; replace it on each
 update instead of appending progress lines (history keeps the old ones). When closing, add "**Result (YYYY-MM-DD):**"
 with the commit, PR, or test evidence. Close each subtask as soon as it is done, not in a batch at the end.
+To change part of a long body, use update_node append (or section + body/append for one "## Heading")
+instead of re-sending the whole body.
 
 Decisions: when the user (or anyone) makes a decision about a task, record it in that task's body as its own line,
 "**Decision (Name, YYYY-MM-DD):** what was decided, and why in a few words" (update_node; keep the rest of the body).
@@ -127,7 +129,7 @@ const tools: Tool[] = [
   {
     name: 'apply_ops',
     description:
-      'Create, update, or delete nodes and edges in one transaction. When it closes tasks, nowReady lists the tasks that just became ready. Ops: create_node (kind, title, body?, status?, attrs?, ref?), update_node (id, ...; attrs merge, null removes), delete_node, create_edge (src, kind, dst, note?), update_edge, delete_edge (id, or src+kind+dst). Use "ref" on create_node and "$ref" in later ops to link new nodes. Edge kinds: needs (task→task; a root task is one nothing needs), uses (task→resource), involves (task→person/team), reports_to (person/team→person/team), member_of (person/team→team).',
+      'Create, update, or delete nodes and edges in one transaction. When it closes tasks, nowReady lists the tasks that just became ready. Ops: create_node (kind, title, body?, status?, attrs?, ref?), update_node (id, ...; attrs merge, null removes; append adds to the body, and section limits body or append to one "## Heading" section, instead of re-sending the whole body), delete_node, create_edge (src, kind, dst, note?), update_edge, delete_edge (id, or src+kind+dst). Use "ref" on create_node and "$ref" in later ops to link new nodes. Edge kinds: needs (task→task; a root task is one nothing needs), uses (task→resource), involves (task→person/team), reports_to (person/team→person/team), member_of (person/team→team).',
     input: z.object({ ops: z.array(Op).min(1) }),
     run: async (core, a: { ops: Op[] }) =>
       core.run(who(null, 'mcp'), async (c) => {

@@ -1,6 +1,7 @@
 // Applies a batch of operations (the one change vocabulary shared by the UI and MCP)
 // inside the caller's transaction. Checks every rule the database can't.
 import { z } from 'zod';
+import { patchBody } from '../shared/body';
 import { wouldCycle } from '../shared/graph';
 import { ATTRS_BY_KIND, EDGE_RULES, type NodeKind, type Op, Ops, USER_ID } from '../shared/model';
 import * as s from './store';
@@ -52,14 +53,20 @@ async function applyOne(c: Ctx, op: Op, resolve: (v: string) => string, refs: Ma
     }
     case 'update_node': {
       const id = resolve(op.id);
-      const node = await s.getNode(c.tx, id);
+      const node = await s.getNode(c.tx, id, { lock: true });
       if (op.status && node.kind !== 'task') throw new Invalid('only tasks have a status');
       if (op.attrs) {
         const merged: Record<string, unknown> = { ...node.attrs, ...op.attrs };
         for (const [k, v] of Object.entries(merged)) if (v === null) delete merged[k];
         checkAttrs(node.kind, merged);
       }
-      await s.patchNode(c, id, op);
+      let body: string | undefined;
+      try {
+        body = patchBody(node.body, op);
+      } catch (err) {
+        throw new Invalid((err as Error).message);
+      }
+      await s.patchNode(c, id, { ...op, body });
       return { op: op.op, id };
     }
     case 'delete_node': {

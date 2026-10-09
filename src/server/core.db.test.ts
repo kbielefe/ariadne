@@ -86,6 +86,17 @@ describe('graph', () => {
     expect(leaf.coordinateWith).toMatchObject([{ from: { title: 'Backend' }, item: { name: 'Bryan', note: 'owns auth', areas: ['RBAC'] } }]);
     expect(leaf.ready).toBe(true);
   });
+
+  it('appends to a body or patches one section, even when several ops in a batch touch it', async () => {
+    const t = await ids([{ op: 'create_node', ref: 'a', kind: 'task', title: 'A', body: '**What:** x.\n\n## Log\n\n- one' }]);
+    await core.ops(asClaude(), [
+      { op: 'update_node', id: t.a!, section: '## Log', append: '- two' },
+      { op: 'update_node', id: t.a!, append: '**Status (2026-10-09):** going.' },
+      { op: 'update_node', id: t.a!, section: '## Log', body: '- three' },
+    ]);
+    expect((await s.getNode(db, t.a!)).body).toBe('**What:** x.\n\n## Log\n\n- three');
+    await expect(core.ops(asClaude(), [{ op: 'update_node', id: t.a!, body: 'b', append: 'c' }])).rejects.toThrow(/op 0 \(update_node\): give body or append/);
+  });
 });
 
 describe('undo', () => {
