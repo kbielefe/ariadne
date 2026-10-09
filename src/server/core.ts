@@ -33,13 +33,14 @@ export class Core {
     return { nodes, edges };
   }
 
-  /** Open tasks that need one of `closed` and now wait on nothing: what closing those tasks just made ready. */
+  /** Open tasks that need one of `closed` and now wait on nothing (no open needs, no waits_on): what closing those tasks just made ready. */
   async newlyReady(q: s.Q, closed: string[]): Promise<{ id: string; title: string }[]> {
     if (!closed.length) return [];
     const r = await q.query(
       `SELECT DISTINCT t.id, t.title FROM edges e JOIN nodes t ON t.id = e.src JOIN nodes d ON d.id = e.dst
        WHERE e.kind = 'needs' AND e.dst::text = ANY($1) AND d.status <> 'open' AND t.status = 'open'
          AND NOT EXISTS (SELECT 1 FROM edges w JOIN nodes n ON n.id = w.dst WHERE w.kind = 'needs' AND w.src = t.id AND n.status = 'open')
+         AND NOT EXISTS (SELECT 1 FROM edges x WHERE x.kind = 'waits_on' AND x.src = t.id)
        ORDER BY t.title`,
       [closed],
     );

@@ -17,7 +17,7 @@ import { who } from './store';
 
 const INSTRUCTIONS = `Ariadne is the user's task and org tracker: their trusted external memory, so the bigger picture
 and what's next survive interruptions and session changes. It is a graph of tasks, people, teams, and resources
-(edges needs/uses/involves/reports_to/member_of). Every change is audited and can be undone (history, undo).
+(edges needs/uses/involves/reports_to/member_of/waits_on). Every change is audited and can be undone (history, undo).
 Before working on a task, check it is clear: a specific title, and a clear point where it is done. If not, rename it
 (when the context tells you what is meant) or ask the user first. A task with an empty body is a quick capture: link
 it with needs from the nearest task it belongs to, so it is not an orphan root. When you pick it up, fill in What/Why
@@ -28,10 +28,16 @@ before A: check it against the real dependency (which code ships first), not the
 leaf is about one PR or commit-sized change, one decision, one conversation with a specific person, or one verification
 run ("integration suite passes on branch X"). An umbrella task's body says "Done when the kept subtasks are done."
 Chains 3-6 levels deep are normal. When two parents need the same thing, link both to one subtask rather than
-duplicating it. search before creating a task; update or close a stale one instead of adding a near-duplicate. When
-work is blocked outside the user's control (a review, a release, someone's answer), add a leaf "Waiting on: <what>"
-(e.g. "Waiting on review: <repo> PR #48") with a link, needed by every task it blocks; close it when that happens.
-A dropped need counts as satisfied, so drop only work that will not happen. When work moves (e.g. PRs combined),
+duplicating it. search before creating a task; update or close a stale one instead of adding a near-duplicate.
+
+Waiting: when work is blocked outside the user's control (a PR review, a CI build, a merge, a release, someone's
+answer), add a leaf "Waiting on <what>: <subject>" (e.g. "Waiting on review: <repo> PR #48", "Waiting on CI: <repo>
+PR #48", "Waiting on merge: <repo> PR #48"), needed by every task it blocks. Always link it with waits_on to who or
+what it waits on: the reviewer or team (person/team), or the build or PR (resource with a url); search for that node
+first and create it if missing. Add the leaf as soon as you open a PR, request a review, start a CI run, or ask someone
+a question, not only once work is stuck. Use waits_on liberally: the user reads the graph view to see what is blocked
+on what, without opening task bodies. A task with a waits_on edge is blocked, not ready, until it is closed: close it
+when the wait is over, and add a new leaf for the next wait (review, then CI, then merge). A dropped need counts as satisfied, so drop only work that will not happen. When work moves (e.g. PRs combined),
 retitle the task to what it is now and re-point its edges.
 
 Titles and bodies: prefix titles with the repo or area ("PDP CI: ...") and name the result, not the activity. Body:
@@ -140,7 +146,7 @@ const tools: Tool[] = [
   {
     name: 'apply_ops',
     description:
-      'Create, update, or delete nodes and edges in one transaction. When it closes tasks, nowReady lists the tasks that just became ready. Ops: create_node (kind, title, body?, status?, attrs?, ref?), update_node (id, ...; attrs merge, null removes; task attrs take guidance plus any keys of your own, e.g. structured run state; append adds to the body, and section limits body or append to one "## Heading" section, instead of re-sending the whole body), delete_node, create_edge (src, kind, dst, note?), update_edge, delete_edge (id, or src+kind+dst). Use "ref" on create_node and "$ref" in later ops to link new nodes. Edge kinds: needs (task→task; a root task is one nothing needs), uses (task→resource), involves (task→person/team), reports_to (person/team→person/team), member_of (person/team→team).',
+      'Create, update, or delete nodes and edges in one transaction. When it closes tasks, nowReady lists the tasks that just became ready. Ops: create_node (kind, title, body?, status?, attrs?, ref?), update_node (id, ...; attrs merge, null removes; task attrs take guidance plus any keys of your own, e.g. structured run state; append adds to the body, and section limits body or append to one "## Heading" section, instead of re-sending the whole body), delete_node, create_edge (src, kind, dst, note?), update_edge, delete_edge (id, or src+kind+dst). Use "ref" on create_node and "$ref" in later ops to link new nodes. Edge kinds: needs (task→task; a root task is one nothing needs), uses (task→resource), involves (task→person/team), reports_to (person/team→person/team), member_of (person/team→team), waits_on (task→person/team/resource it is blocked on outside the user\'s control; the task is blocked, not ready, until closed).',
     input: z.object({ ops: z.array(Op).min(1) }),
     run: async (core, a: { ops: Op[] }) =>
       core.run(who(null, 'mcp'), async (c) => {

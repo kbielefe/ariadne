@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { impacts } from './graph';
+import { impacts, readiness } from './graph';
 import type { Edge, Node, TaskStatus } from './model';
 
 const needs = (src: string, dst: string): Edge => ({ id: `${src}>${dst}`, src, kind: 'needs', dst, note: '', createdAt: '' });
@@ -29,5 +29,14 @@ describe('impacts', () => {
 
   it('has no entry for tasks without needs edges (callers treat them as 0)', () => {
     expect(impacts([], new Map()).size).toBe(0);
+  });
+});
+
+describe('readiness', () => {
+  it('a task that waits_on someone is blocked, not ready, even with nothing open it needs', () => {
+    const byId = tasks({ w: 'open', done: 'done' });
+    const edges = [needs('w', 'done'), { ...needs('w', 'ann'), kind: 'waits_on' as const }];
+    expect(readiness(byId.get('w')!, edges, byId)).toEqual({ ready: false, waitingOn: [], external: ['ann'] });
+    expect(readiness(byId.get('w')!, [needs('w', 'done')], byId)).toEqual({ ready: true, waitingOn: [], external: [] });
   });
 });

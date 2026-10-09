@@ -90,11 +90,14 @@ export interface Readiness {
   ready: boolean;
   /** open tasks this one needs */
   waitingOn: string[];
+  /** who or what outside the user's control it waits on (waits_on edges): blocked until the task is closed */
+  external: string[];
 }
 
 export function readiness(task: Node, edges: readonly Edge[], byId: ReadonlyMap<string, Node>): Readiness {
   const waitingOn = edges.filter((e) => e.kind === 'needs' && e.src === task.id && byId.get(e.dst)?.status === 'open').map((e) => e.dst);
-  return { ready: task.status === 'open' && waitingOn.length === 0, waitingOn };
+  const external = edges.filter((e) => e.kind === 'waits_on' && e.src === task.id).map((e) => e.dst);
+  return { ready: task.status === 'open' && waitingOn.length === 0 && external.length === 0, waitingOn, external };
 }
 
 /** Would adding src -kind-> dst close a cycle? (Is src already reachable from dst?) */

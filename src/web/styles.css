@@ -10,6 +10,8 @@
   --accent-soft: #e6edfc;
   --good: #1a7f43;
   --warn: #b45309;
+  --blocked: #ca8a04;
+  --blocked-soft: #fef9c3;
   --danger: #c0352b;
   --person: #eef2ff;
   --team: #fdf3d8;
@@ -31,6 +33,8 @@
     --accent-soft: #24304d;
     --good: #4cc27a;
     --warn: #f0a14a;
+    --blocked: #facc15;
+    --blocked-soft: #3a3412;
     --danger: #ff7a70;
     --person: #252b45;
       --team: #3a3220;
@@ -260,6 +264,9 @@ code,
 }
 .tag.good {
   color: var(--good);
+}
+.tag.blocked {
+  color: var(--blocked);
 }
 .row {
   display: flex;

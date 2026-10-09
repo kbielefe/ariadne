@@ -67,7 +67,7 @@ export type Node = z.infer<typeof Node>;
 
 // ---------------------------------------------------------------- edges
 
-export const EdgeKind = z.enum(['needs', 'uses', 'involves', 'reports_to', 'member_of']);
+export const EdgeKind = z.enum(['needs', 'uses', 'involves', 'reports_to', 'member_of', 'waits_on']);
 export type EdgeKind = z.infer<typeof EdgeKind>;
 
 /** Allowed endpoint kinds per edge kind, and whether the edge must stay acyclic. */
@@ -77,6 +77,7 @@ export const EDGE_RULES: Record<EdgeKind, { src: readonly NodeKind[]; dst: reado
   involves: { src: ['task'], dst: ACTOR_KINDS, acyclic: false, label: 'coordinate with' },
   reports_to: { src: ACTOR_KINDS, dst: ACTOR_KINDS, acyclic: true, label: 'reports to' },
   member_of: { src: ACTOR_KINDS, dst: ['team'], acyclic: true, label: 'member of' },
+  waits_on: { src: ['task'], dst: [...ACTOR_KINDS, 'resource'], acyclic: false, label: 'waiting on' },
 };
 
 export const Edge = z.object({

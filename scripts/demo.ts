@@ -21,6 +21,7 @@ const { results } = await call<{ results: { ref?: string; id: string }[] }>('app
     { op: 'create_node', ref: 'flow', kind: 'task', title: 'Implement token exchange' },
     { op: 'create_node', ref: 'rbac', kind: 'task', title: 'Agree on the RBAC claims', body: '**Decision (Bryan, 2026-10-02):** roles + tenant, so pods can share an IdP.' },
     { op: 'create_node', ref: 'docs', kind: 'task', title: 'Write the how-to for delivery pods' },
+    { op: 'create_node', ref: 'review', kind: 'task', title: 'Waiting on review: agent-framework PR #7 (OIDC spike)' },
     { op: 'create_node', ref: 'repo', kind: 'resource', title: 'agent-framework repo', attrs: { type: 'repo', url: 'https://github.com/example/agent-framework' } },
     { op: 'create_node', ref: 'build', kind: 'resource', title: 'agent-framework CI', attrs: { type: 'build', url: 'https://jenkins.example/job/agent-framework' } },
     { op: 'create_node', ref: 'bryan', kind: 'person', title: 'Bryan', attrs: { areas: ['RBAC', 'feature flags'] } },
@@ -37,6 +38,8 @@ const { results } = await call<{ results: { ref?: string; id: string }[] }>('app
     { op: 'create_edge', src: '$bryan', kind: 'member_of', dst: '$pod' },
     { op: 'create_edge', src: '00000000-0000-4000-8000-000000000001', kind: 'member_of', dst: '$pod' },
     { op: 'create_edge', src: '$root', kind: 'involves', dst: '$pod' },
+    { op: 'create_edge', src: '$oidc', kind: 'needs', dst: '$review' },
+    { op: 'create_edge', src: '$review', kind: 'waits_on', dst: '$bryan' },
   ],
 });
 const id = (ref: string) => results.find((r) => r.ref === ref)!.id;

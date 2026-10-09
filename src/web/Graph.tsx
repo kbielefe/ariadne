@@ -112,7 +112,10 @@ export function GraphView({ selected, onSelect }: { selected: string | null; onS
       const classes: string[] = [n.kind];
       if (n.kind === 'task') {
         classes.push(n.status ?? 'open');
-        if (n.status === 'open') classes.push(readiness(n, graph.edges, byId).ready ? 'ready' : 'waiting');
+        if (n.status === 'open') {
+          const r = readiness(n, graph.edges, byId);
+          classes.push(r.ready ? 'ready' : r.external.length ? 'blocked' : 'waiting');
+        }
         if (!graph.edges.some((e) => e.kind === 'needs' && e.dst === id)) classes.push('root');
       }
       if (id === focus) classes.push('focus');
@@ -322,6 +325,8 @@ function styles(): cytoscape.StylesheetJson {
   const surface = css('--surface', '#ffffff');
   const accent = css('--accent', '#2563eb');
   const good = css('--good', '#15803d');
+  const blocked = css('--blocked', '#ca8a04');
+  const blockedSoft = css('--blocked-soft', '#fef9c3');
   return [
     {
       selector: 'node',
@@ -343,6 +348,8 @@ function styles(): cytoscape.StylesheetJson {
     },
     { selector: 'node.task.ready', style: { 'border-color': good, 'border-width': 2.5 } },
     { selector: 'node.task.waiting', style: { 'border-style': 'dashed' } },
+    // Blocked outside the user's control (a review, a CI build, a merge): yellow, so it stands out from waiting on subtasks.
+    { selector: 'node.task.blocked', style: { 'border-color': blocked, 'border-width': 3, 'background-color': blockedSoft } },
     { selector: 'node.task.root', style: { 'font-weight': 'bold', 'border-width': 3 } },
     { selector: 'node.task.done, node.task.dropped', style: { color: muted, opacity: 0.6 } },
     { selector: 'node.task.dropped', style: { 'text-decoration': 'line-through' } as never },
@@ -370,6 +377,7 @@ function styles(): cytoscape.StylesheetJson {
     { selector: 'edge.needs', style: { width: 2, 'line-color': muted, 'target-arrow-color': muted } },
     { selector: 'edge.uses', style: { 'line-style': 'dashed' } },
     { selector: 'edge.involves', style: { 'line-style': 'dotted' } },
+    { selector: 'edge.waits_on', style: { width: 2.5, 'line-color': blocked, 'target-arrow-color': blocked, color: blocked } },
     { selector: 'edge:selected', style: { 'line-color': accent, 'target-arrow-color': accent, width: 3 } },
   ];
 }

@@ -9,7 +9,7 @@ export interface NodeDetail {
   node: Node;
   edges: Edge[];
   neighbors: Node[];
-  readiness?: { ready: boolean; waitingOn: string[] };
+  readiness?: { ready: boolean; waitingOn: string[]; external: string[] };
 }
 
 export class ApiError extends Error {}

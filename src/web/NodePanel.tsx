@@ -103,7 +103,7 @@ export function NodePanel({ id, onSelect, onClose }: { id: string; onSelect(id: 
             <option value="dropped">dropped</option>
           </select>
         )}
-        {d.readiness && <span className={`tag ${d.readiness.ready ? 'good' : ''}`}>{n.status !== 'open' ? n.status : d.readiness.ready ? 'ready' : `waiting on ${d.readiness.waitingOn.length}`}</span>}
+        {d.readiness && <span className={`tag ${d.readiness.ready ? 'good' : n.status === 'open' && d.readiness.external.length ? 'blocked' : ''}`}>{n.status !== 'open' ? n.status : readinessLabel(d)}</span>}
         {n.kind === 'task' && (
           <span className="tag" title="How many tasks (directly or indirectly) need this one">
             impact {impact.get(id) ?? 0}
@@ -306,7 +306,14 @@ function RawAttrs({ node, save }: { node: Node; save(p: { attrs: Record<string, 
 // ---------------------------------------------------------------- edges
 
 /** How an edge reads from its destination's side. */
-const incomingLabel = (k: EdgeKind) => (k === 'needs' ? 'needed by' : k === 'reports_to' ? 'supervises' : k === 'member_of' ? 'has member' : `${EDGE_RULES[k].label} (from)`);
+const incomingLabel = (k: EdgeKind) => (k === 'needs' ? 'needed by' : k === 'reports_to' ? 'supervises' : k === 'member_of' ? 'has member' : k === 'waits_on' ? 'blocks' : `${EDGE_RULES[k].label} (from)`);
+
+/** An open task's tag: ready, blocked on who or what (outside the user's control), or how many subtasks it waits on. */
+function readinessLabel({ readiness: r, neighbors }: NodeDetail): string {
+  if (!r || r.ready) return 'ready';
+  if (r.external.length) return `blocked on ${r.external.map((x) => neighbors.find((n) => n.id === x)?.title ?? '?').join(', ')}`;
+  return `waiting on ${r.waitingOn.length}`;
+}
 
 function Edges({ detail: d, run, onSelect }: { detail: NodeDetail; run(ops: Op[]): Promise<unknown>; onSelect(id: string): void }) {
   const { byId } = useApp();

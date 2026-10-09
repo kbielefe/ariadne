@@ -43,10 +43,17 @@ lines, branch scopes, and undo.
 | `involves` | task → person/team | Coordinate with them |
 | `reports_to` | person/team → person/team | Supervisor. Acyclic |
 | `member_of` | person/team → team | Acyclic |
+| `waits_on` | task → person/team/resource | Blocked outside your control: a PR review, CI build, merge, or answer. Drawn yellow |
 
-**Computed, not stored:** whether a task is ready (open, and everything it needs is closed) and whether
+**Computed, not stored:** whether a task is ready (open, everything it needs is closed, and no `waits_on`) and whether
 it's a root (no task needs it). When `apply_ops` closes tasks, its answer lists the tasks that just
 became ready (`nowReady`), so the next step is never silent.
+
+**Waiting on someone:** an external blocker is a leaf task ("Waiting on review: <repo> PR #48") that
+`waits_on` the reviewer, team, or build, and is needed by what it blocks. While open it's **blocked**
+(yellow in the graph), not ready. Closing it unblocks its parents and reports them in `nowReady`; the
+edge stays as history. Why a leaf and not an edge on the blocked task: closing a task keeps the history
+and the `nowReady` signal, where deleting an edge would lose both.
 
 **Inheritance:** a task's context includes the guidance, resources, and `involves` people of every
 task that (transitively) needs it. Attach a repo to a root task once, and all its subtasks get it.
