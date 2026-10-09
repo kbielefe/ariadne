@@ -19,22 +19,32 @@ const INSTRUCTIONS = `Ariadne is the user's task and org tracker: their trusted 
 and what's next survive interruptions and session changes. It is a graph of tasks, people, teams, and resources
 (edges needs/uses/involves/reports_to/member_of). Every change is audited and can be undone (history, undo).
 Before working on a task, check it is clear: a specific title, and a clear point where it is done. If not, rename it
-(when the context tells you what is meant) or ask the user first. A task with an empty body is a quick capture: when
-you pick it up, fill in What/Why and **Done when:** before starting.
+(when the context tells you what is meant) or ask the user first. A task with an empty body is a quick capture: link
+it with needs from the nearest task it belongs to, so it is not an orphan root. When you pick it up, fill in What/Why
+and **Done when:** before starting.
 
-Subtasks: before starting non-trivial work, split it into subtasks linked by needs. A good leaf is about one PR or
-commit-sized change, one decision, one conversation with a specific person, or one verification run ("integration suite
-passes on branch X"). An umbrella task's body says "Done when the kept subtasks are done." Chains 3-6 levels deep are
-normal. When two parents need the same thing, link both to one subtask rather than duplicating it. search before
-creating a task; update or close a stale one instead of adding a near-duplicate.
+Subtasks: before starting non-trivial work, split it into subtasks linked by needs. "A needs B" means B must be done
+before A: check it against the real dependency (which code ships first), not the order you wrote the tasks. A good
+leaf is about one PR or commit-sized change, one decision, one conversation with a specific person, or one verification
+run ("integration suite passes on branch X"). An umbrella task's body says "Done when the kept subtasks are done."
+Chains 3-6 levels deep are normal. When two parents need the same thing, link both to one subtask rather than
+duplicating it. search before creating a task; update or close a stale one instead of adding a near-duplicate. When
+work is blocked outside the user's control (a review, a release, someone's answer), add a leaf "Waiting on: <what>"
+(e.g. "Waiting on review: <repo> PR #48") with a link, needed by every task it blocks; close it when that happens.
+A dropped need counts as satisfied, so drop only work that will not happen. When work moves (e.g. PRs combined),
+retitle the task to what it is now and re-point its edges.
 
 Titles and bodies: prefix titles with the repo or area ("PDP CI: ...") and name the result, not the activity. Body:
-What/Why, then **Done when:**. When closing, add "**Result (YYYY-MM-DD):**" with the commit, PR, or test evidence.
-Close each subtask as soon as it is done, not in a batch at the end.
+What/Why, then **Done when:**. Keep one "**Status (YYYY-MM-DD):**" line for where it stands now; replace it on each
+update instead of appending progress lines (history keeps the old ones). When closing, add "**Result (YYYY-MM-DD):**"
+with the commit, PR, or test evidence. Close each subtask as soon as it is done, not in a batch at the end.
 
 Decisions: when the user (or anyone) makes a decision about a task, record it in that task's body as its own line,
 "**Decision (Name, YYYY-MM-DD):** what was decided, and why in a few words" (update_node; keep the rest of the body).
-Put it on the task it shapes. search with decisions: true finds them; check there before re-asking the user.
+Put it on the task it shapes. search with decisions: true finds them; check there before re-asking the user. If you
+must choose without the user (e.g. working unattended), write "**Decision (<agent>, provisional, YYYY-MM-DD):** chose A
+over B, why. Flip: how to reverse." When the user confirms or changes it, rewrite it as their own Decision line,
+without Flip.
 
 When closing tasks makes others ready, apply_ops lists them as nowReady: offer the user the next one.`;
 
