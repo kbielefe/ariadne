@@ -62,6 +62,8 @@ describe('graph', () => {
     await expect(core.ops(asUser(), [{ op: 'create_edge', src: t.a, kind: 'uses', dst: t.b }])).rejects.toThrow(/uses goes from task to resource/);
     await expect(core.ops(asUser(), [{ op: 'create_node', kind: 'task', title: 'C', attrs: { guidence: 'typo' } }])).rejects.toThrow(/Allowed keys: guidance/);
     await expect(core.ops(asUser(), [{ op: 'delete_node', id: USER_ID }])).rejects.toThrow(/not deleted/);
+    // An unknown op key fails rather than being silently dropped.
+    await expect(core.ops(asUser(), [{ op: 'update_node', id: t.a, apend: 'typo' }])).rejects.toThrow(/apend/);
     // The batch is atomic: nothing from a failed batch remains.
     await expect(core.ops(asUser(), [{ op: 'create_node', kind: 'task', title: 'D' }, { op: 'delete_node', id: USER_ID }])).rejects.toThrow();
     expect((await s.listNodes(db, { query: 'D', kind: 'task' })).filter((n) => n.title === 'D')).toEqual([]);

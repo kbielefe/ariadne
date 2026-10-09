@@ -91,11 +91,12 @@ export type Edge = z.infer<typeof Edge>;
 //
 // One vocabulary for every change, whoever makes it: the web UI and Claude Code over MCP.
 // `ref` names a node created earlier in the same batch; later ops may use "$ref" in place of an id.
+// Ops are strict: an unknown key (a typo, or a field an older server doesn't know) fails instead of being dropped.
 
 const IdOrRef = z.string().min(1).describe('A node id, or "$name" for a node created earlier in this batch');
 
 export const Op = z.discriminatedUnion('op', [
-  z.object({
+  z.strictObject({
     op: z.literal('create_node'),
     ref: z.string().optional(),
     kind: NodeKind,
@@ -104,7 +105,7 @@ export const Op = z.discriminatedUnion('op', [
     status: TaskStatus.optional(),
     attrs: z.record(z.string(), z.unknown()).optional(),
   }),
-  z.object({
+  z.strictObject({
     op: z.literal('update_node'),
     id: IdOrRef,
     title: z.string().min(1).optional(),
@@ -115,10 +116,10 @@ export const Op = z.discriminatedUnion('op', [
     attrs: z.record(z.string(), z.unknown()).optional().describe('Merged into existing attrs; null removes a key'),
     version: z.number().int().optional().describe('Fail if the node changed since this version'),
   }),
-  z.object({ op: z.literal('delete_node'), id: IdOrRef }),
-  z.object({ op: z.literal('create_edge'), src: IdOrRef, kind: EdgeKind, dst: IdOrRef, note: z.string().optional() }),
-  z.object({ op: z.literal('update_edge'), id: Id, note: z.string() }),
-  z.object({ op: z.literal('delete_edge'), id: Id.optional(), src: IdOrRef.optional(), kind: EdgeKind.optional(), dst: IdOrRef.optional() }),
+  z.strictObject({ op: z.literal('delete_node'), id: IdOrRef }),
+  z.strictObject({ op: z.literal('create_edge'), src: IdOrRef, kind: EdgeKind, dst: IdOrRef, note: z.string().optional() }),
+  z.strictObject({ op: z.literal('update_edge'), id: Id, note: z.string() }),
+  z.strictObject({ op: z.literal('delete_edge'), id: Id.optional(), src: IdOrRef.optional(), kind: EdgeKind.optional(), dst: IdOrRef.optional() }),
 ]);
 export type Op = z.infer<typeof Op>;
 export const Ops = z.array(Op).min(1);
