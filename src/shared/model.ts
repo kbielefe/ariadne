@@ -18,11 +18,13 @@ export const isActorKind = (k: NodeKind) => (ACTOR_KINDS as readonly string[]).i
 export const TaskStatus = z.enum(['open', 'done', 'dropped']);
 export type TaskStatus = z.infer<typeof TaskStatus>;
 
+// Tasks also take any keys of their own (e.g. an agent's structured run state); only the known ones are checked.
 export const TaskAttrs = z
   .object({
     guidance: z.string().describe('Instructions that apply to this task and everything it needs (inherited)'),
   })
   .partial();
+export const OPEN_ATTRS: readonly NodeKind[] = ['task'];
 
 const ActorAttrs = z
   .object({

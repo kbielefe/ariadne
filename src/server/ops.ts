@@ -3,7 +3,7 @@
 import { z } from 'zod';
 import { patchBody } from '../shared/body';
 import { wouldCycle } from '../shared/graph';
-import { ATTRS_BY_KIND, EDGE_RULES, type NodeKind, type Op, Ops, USER_ID } from '../shared/model';
+import { ATTRS_BY_KIND, EDGE_RULES, type NodeKind, OPEN_ATTRS, type Op, Ops, USER_ID } from '../shared/model';
 import * as s from './store';
 import { type Ctx, Invalid } from './store';
 
@@ -35,8 +35,9 @@ export async function applyOps(c: Ctx, input: unknown): Promise<OpResult[]> {
 }
 
 function checkAttrs(kind: NodeKind, attrs: Record<string, unknown>) {
-  const r = ATTRS_BY_KIND[kind].strict().safeParse(attrs);
-  if (!r.success) throw new Invalid(`attrs for a ${kind}: ${z.prettifyError(r.error)}. Allowed keys: ${Object.keys(ATTRS_BY_KIND[kind].shape).join(', ')}`);
+  const open = OPEN_ATTRS.includes(kind);
+  const r = (open ? ATTRS_BY_KIND[kind].loose() : ATTRS_BY_KIND[kind].strict()).safeParse(attrs);
+  if (!r.success) throw new Invalid(`attrs for a ${kind}: ${z.prettifyError(r.error)}. ${open ? 'Known' : 'Allowed'} keys: ${Object.keys(ATTRS_BY_KIND[kind].shape).join(', ')}`);
 }
 
 async function applyOne(c: Ctx, op: Op, resolve: (v: string) => string, refs: Map<string, string>): Promise<OpResult> {

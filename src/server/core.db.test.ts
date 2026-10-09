@@ -60,7 +60,11 @@ describe('graph', () => {
     ]);
     await expect(core.ops(asUser(), [{ op: 'create_edge', src: tm.dept, kind: 'member_of', dst: tm.pod }])).rejects.toThrow(/cycle/);
     await expect(core.ops(asUser(), [{ op: 'create_edge', src: t.a, kind: 'uses', dst: t.b }])).rejects.toThrow(/uses goes from task to resource/);
-    await expect(core.ops(asUser(), [{ op: 'create_node', kind: 'task', title: 'C', attrs: { guidence: 'typo' } }])).rejects.toThrow(/Allowed keys: guidance/);
+    await expect(core.ops(asUser(), [{ op: 'create_node', kind: 'person', title: 'C', attrs: { area: ['typo'] } }])).rejects.toThrow(/Allowed keys: areas/);
+    // Tasks take keys of their own, but known keys are still checked.
+    await core.ops(asUser(), [{ op: 'update_node', id: t.a, attrs: { run: { step: 3, budget: 0.2 } } }]);
+    expect((await s.getNode(db, t.a!)).attrs).toEqual({ run: { step: 3, budget: 0.2 } });
+    await expect(core.ops(asUser(), [{ op: 'update_node', id: t.a, attrs: { guidance: 42 } }])).rejects.toThrow(/Known keys: guidance/);
     await expect(core.ops(asUser(), [{ op: 'delete_node', id: USER_ID }])).rejects.toThrow(/not deleted/);
     // An unknown op key fails rather than being silently dropped.
     await expect(core.ops(asUser(), [{ op: 'update_node', id: t.a, apend: 'typo' }])).rejects.toThrow(/apend/);

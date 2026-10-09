@@ -30,7 +30,7 @@ lines, branch scopes, and undo.
 
 | Kind | Attrs |
 |---|---|
-| task | `guidance`: instructions for this task and everything it needs (inherited) |
+| task | `guidance`: instructions for this task and everything it needs (inherited). Any other keys are allowed too (e.g. an agent's structured run state) and are not checked |
 | person, team | `areas`: what they own or can help with |
 | resource | `type` (repo / branch / build / doc / link / other), `url`; for a branch, `repo` and `branch` |
 
