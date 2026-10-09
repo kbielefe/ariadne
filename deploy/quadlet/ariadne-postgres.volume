@@ -1,0 +1,3 @@
+# Ariadne data. Reuses the volume the Compose stack created.
+[Volume]
+VolumeName=ariadne2_postgres_data

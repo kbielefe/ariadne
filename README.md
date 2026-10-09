@@ -33,6 +33,20 @@ edits. Every change is audited and can be undone. The design and its reasons are
 
 To deploy UI or server changes: `podman compose build app && podman compose up -d --force-recreate app`.
 
+## Run as a systemd service (quadlets)
+
+Instead of Compose, run Ariadne as rootless Podman quadlets (`deploy/quadlet/`), so it starts with
+your session. They reuse the Compose data volume, so stop Compose first (`podman compose down`).
+
+```sh
+podman build -t localhost/ariadne2:0.3.0 .   # needs the VPN
+scripts/install-quadlet.sh                    # units + secrets from .env, then (re)starts
+```
+
+- Status and logs: `systemctl --user status ariadne` · `journalctl --user -u ariadne -f`
+- Redeploy after a rebuild: `systemctl --user restart ariadne`
+- Start at boot without logging in: `loginctl enable-linger`
+
 ## Development
 
 | Command | What it does |

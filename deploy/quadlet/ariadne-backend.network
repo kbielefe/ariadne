@@ -1,0 +1,4 @@
+# Ariadne: app <-> postgres only, no outside access.
+[Network]
+NetworkName=ariadne-backend
+Internal=true

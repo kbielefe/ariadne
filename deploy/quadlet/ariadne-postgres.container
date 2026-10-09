@@ -1,0 +1,24 @@
+# Ariadne PostgreSQL. Password comes from the ariadne-postgres-password podman secret.
+[Unit]
+Description=Ariadne PostgreSQL
+
+[Container]
+ContainerName=ariadne-postgres
+Image=artifactory.adtran.com/docker/postgres:17.6-alpine@sha256:747d5ed1fdeeb124b880fbe3d7c6557d2c4064ae41d6b6297d417882effce4be
+Environment=POSTGRES_USER=ariadne POSTGRES_DB=ariadne POSTGRES_PASSWORD_FILE=/run/secrets/ariadne-postgres-password
+Secret=ariadne-postgres-password
+Volume=ariadne-postgres.volume:/var/lib/postgresql/data
+Network=ariadne-backend.network
+HealthCmd=pg_isready -U ariadne -d ariadne
+HealthInterval=5s
+HealthTimeout=5s
+HealthRetries=20
+# The unit is "started" only once healthy, so the app can wait on it.
+Notify=healthy
+
+[Service]
+Restart=always
+TimeoutStartSec=300
+
+[Install]
+WantedBy=default.target

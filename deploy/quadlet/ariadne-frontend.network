@@ -1,0 +1,3 @@
+# Ariadne: the app's published-port network.
+[Network]
+NetworkName=ariadne-frontend
