@@ -9,7 +9,7 @@ import { CallToolRequestSchema, type CallToolResult, ListToolsRequestSchema } fr
 import { z } from 'zod';
 import { type Direction, reachable } from '../shared/graph';
 import { EdgeKind, NodeKind, Op, TaskStatus } from '../shared/model';
-import { ContextBuilder } from './context';
+import { ContextBuilder, type TaskContext } from './context';
 import type { Core } from './core';
 import { applyOps } from './ops';
 import * as s from './store';
@@ -50,6 +50,15 @@ without Flip.
 
 When closing tasks makes others ready, apply_ops lists them as nowReady: offer the user the next one.`;
 
+/** A task's context without the bodies: its own is already in node, and the others can be fetched by id. */
+function briefContext({ body: _, ...c }: TaskContext) {
+  return {
+    ...c,
+    resources: c.resources.map(({ from, item: { about: _a, ...item } }) => ({ from, item })),
+    coordinateWith: c.coordinateWith.map(({ from, item: { about: _a, ...item } }) => ({ from, item })),
+  };
+}
+
 type Handler = (core: Core, args: never) => Promise<unknown>;
 export interface Tool {
   name: string;
@@ -62,16 +71,18 @@ export interface Tool {
 const tools: Tool[] = [
   {
     name: 'get_node',
-    description: 'One node with its edges and neighbors. For a task, also readiness, inherited context (guidance, resources, people from every task that needs it), and the shared branches it ships on with every task in their scope.',
-    input: z.object({ id: z.uuid() }),
+    description: 'One node with its edges and neighbors. For a task, also readiness, inherited context (guidance, resources, people from every task that needs it), and the shared branches it ships on with every task in their scope. brief: true leaves out neighbor, resource, and people bodies (ids, titles, and status only); use it on busy nodes.',
+    input: z.object({ id: z.uuid(), brief: z.boolean().optional().describe('Neighbors as id, kind, title, status; no bodies besides this node\'s own') }),
     readOnly: true,
-    run: async (core, a: { id: string }) => {
+    run: async (core, a: { id: string; brief?: boolean }) => {
       const d = await core.nodeDetail(a.id);
-      if (d.node.kind !== 'task') return d;
+      const detail = a.brief ? { ...d, neighbors: d.neighbors.map((n) => ({ id: n.id, kind: n.kind, title: n.title, status: n.status })) } : d;
+      if (d.node.kind !== 'task') return detail;
       const ctx = await ContextBuilder.load(core.db);
-      const context = ctx.task(a.id);
-      const branches = ctx.branches([context]);
-      return { ...d, context, ...(branches.length ? { branches } : {}) };
+      const full = ctx.task(a.id);
+      const context = a.brief ? briefContext(full) : full;
+      const branches = ctx.branches([full]);
+      return { ...detail, context, ...(branches.length ? { branches } : {}) };
     },
   },
   {

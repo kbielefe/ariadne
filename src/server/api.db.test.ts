@@ -120,6 +120,20 @@ describe('MCP', () => {
     expect(d.branches).toMatchObject([{ name: 'PDP first tag', repo: 'pdp', branch: 'feature/first-tag' }]);
     expect(d.branches[0]!.tasks.map((t) => t.title).sort()).toEqual(['Add the CLI', 'Add the parser', 'Cut the first PDP tag']);
     expect(await call(client, 'get_node', { id: id('solo') })).not.toHaveProperty('branches');
+
+    // brief: neighbors and inherited resources without bodies; the node's own body stays.
+    await core.ops(who(USER_ID, 'ui'), [
+      { op: 'update_node', id: id('tag'), body: 'A long parent body.' },
+      { op: 'update_node', id: id('a'), body: 'Own body.' },
+      { op: 'update_node', id: id('b'), body: 'About the branch.' },
+    ]);
+    const b = await call<{ node: { body: string }; neighbors: Record<string, unknown>[]; context: Record<string, unknown> & { resources: { item: Record<string, unknown> }[] } }>(client, 'get_node', { id: id('a'), brief: true });
+    expect(b.node.body).toBe('Own body.');
+    expect(b.neighbors).toEqual([{ id: id('tag'), kind: 'task', title: 'Cut the first PDP tag', status: 'open' }]);
+    expect(b.context).not.toHaveProperty('body');
+    expect(b.context.resources[0]!.item).toMatchObject({ name: 'PDP first tag' });
+    expect(b.context.resources[0]!.item).not.toHaveProperty('about');
+    expect(JSON.stringify(b)).not.toMatch(/A long parent body|About the branch/);
     await client.close();
   });
 });
