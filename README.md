@@ -33,6 +33,27 @@ edits. Every change is audited and can be undone. The design and its reasons are
 
 To deploy UI or server changes: `podman compose build app && podman compose up -d --force-recreate app`.
 
+The `cloudflared` service joins the same network as the app. In Cloudflare, set the public hostname's service to `http://app:3100` and set `ARIADNE_PUBLIC_URL` to that `https` origin. `CLOUDFLARE_TUNNEL_TOKEN` comes from the tunnel's install token.
+
+The same stack is installed as rootless Quadlets:
+
+```sh
+podman quadlet install --application ariadne --replace quadlet
+systemctl --user start ariadne-app.service
+```
+
+`cloudflared` starts with the app (`ariadne-cloudflared.service`). At start, `quadlet/render-env.sh` reads `%h/source/ariadne/.env`: `POSTGRES_PASSWORD` for Postgres and the app, `CLOUDFLARE_TUNNEL_TOKEN` for the tunnel. `ARIADNE_RELAY` defaults to `server` when it is unset. The containers are `ariadne-app` and `ariadne-postgres`, with network aliases `app` and `postgres`, so the tunnel origin stays `http://app:3100`.
+
+## Sharing a subgraph
+
+Federation is on unless `ARIADNE_FEDERATION=off`. It speaks WebSockets, so one cloudflared tunnel
+pointed at the app port is enough: publish `https://<your-host>` and set `ARIADNE_PUBLIC_URL` to
+that origin. Peers connect to `wss://<your-host>/p2p`. A peer with no public address sets
+`ARIADNE_LAN_URL` (for example `ws://10.1.1.5:3100/p2p`) and, to be reached by someone who can only
+dial out, pairs with a relay (`ARIADNE_RELAY=server` on the public instance, `client` on the
+others). The HTTP UI stays on localhost. See [docs/DESIGN.md](docs/DESIGN.md) for the home-peer
+rule and what the relay can see.
+
 ## Development
 
 | Command | What it does |

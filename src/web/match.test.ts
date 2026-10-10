@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Node } from '../shared/model';
 import { matchNodes } from './match';
 
-const node = (title: string, body = '', status: Node['status'] = 'open') => ({ id: title, kind: 'task', title, body, status, attrs: {}, version: 1, createdAt: '', updatedAt: '' }) as Node;
+const node = (title: string, body = '', status: Node['status'] = 'open') => ({ id: title, kind: 'task', title, body, status, attrs: {}, version: 1, home: null, createdAt: '', updatedAt: '' }) as Node;
 
 describe('matchNodes', () => {
   it('puts title matches first, then body matches with the matching line', () => {
