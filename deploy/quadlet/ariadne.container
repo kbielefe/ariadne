@@ -12,6 +12,8 @@ Pull=never
 Environment=ARIADNE_LISTEN_HOST=0.0.0.0 ARIADNE_LISTEN_PORT=3100
 Environment=ARIADNE_ALLOWED_HOSTS=127.0.0.1:3100,localhost:3100
 Environment=LOG_LEVEL=info
+# No tunnel on this machine, and the read-only root has nowhere to keep a peer key.
+Environment=ARIADNE_FEDERATION=off
 Secret=ariadne-database-url,type=env,target=DATABASE_URL
 # Map you to the image's node user.
 UserNS=keep-id:uid=1000,gid=1000
