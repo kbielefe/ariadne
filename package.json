@@ -57,5 +57,11 @@
     "typescript": "^6.0.3",
     "vite": "^7.3.6",
     "vitest": "^4.1.11"
+  },
+  "pnpm": {
+    "overrides": {
+      "cborg@^6": "6.1.2",
+      "nanoid@^6": "6.0.1"
+    }
   }
 }
