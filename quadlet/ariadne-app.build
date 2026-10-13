@@ -1,0 +1,4 @@
+[Build]
+File=%h/source/ariadne/Containerfile
+SetWorkingDirectory=%h/source/ariadne
+ImageTag=localhost/ariadne2:0.3.0

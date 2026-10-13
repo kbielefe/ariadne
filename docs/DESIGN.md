@@ -102,3 +102,33 @@ Claude Code ──MCP (/mcp)──►
 - **Order:** a control in the left sidebar sets how side-by-side nodes are ordered in the layout: ready first,
   oldest first, newest first, recently updated, or title. Changing it lays the graph out again; it is remembered.
   dagre may still move a node with children to avoid edge crossings; leaves always follow the order.
+
+## 6. Federation
+
+Two instances can share one subgraph. The rest of each graph stays local. A share has two members.
+The instance that created a node is its home: it is the only one that commits an edit to that node.
+The other member's edit is a proposal. A stale `version` fails the same check as a local edit, and
+the sender stores the home's current copy. There is one share log, written by the home of the root,
+not a merge of the two audit logs.
+
+The shared view walks outgoing edges from the root (`needs`, `uses`, `involves`, `waits_on`,
+`member_of`, `reports_to`). It does not walk inward, so a task that merely needs the root stays
+private. `You` (the local user id) is never sent. An edge that touched `You` is published as an edge
+to this instance's own person node. Deleting the edge that brought a node in drops that node from
+the other member's copy.
+
+Transport is WebSockets only, so a cloudflared tunnel can carry it. The public address is
+`wss://<host>/p2p`. Fastify proxies that upgrade to the libp2p listener. TLS stops at Cloudflare;
+the origin speaks plain WebSocket, and the libp2p session inside it stays encrypted. A peer on the
+LAN dials `ws://<lan-ip>:<port>/p2p` instead. Set `ARIADNE_PUBLIC_URL` to the https origin and
+`ARIADNE_LAN_URL` when this instance has no public address. A ping every 25 seconds keeps an idle
+tunnel from closing the socket.
+
+A third instance that can only dial out reaches its peer through the always-on instance, using
+libp2p Circuit Relay v2. The relay cannot read that session. When the two are not online together,
+the sender leaves a sealed frame in the relay's spool. The relay stores the blob and the peer ids,
+and not the share id, titles, or bodies.
+
+`ARIADNE_FEDERATION=off` disables this. `ARIADNE_RELAY` is `off`, `server` (the instance others
+reserve on), or `client`. `ARIADNE_FEDERATION_LISTEN=off` means this instance dials out and does
+not open a port. The HTTP UI and MCP stay on localhost. Federation authenticates with the peer key.

@@ -20,7 +20,12 @@ services:
       ARIADNE_LISTEN_HOST: 0.0.0.0
       ARIADNE_LISTEN_PORT: "3100"
       ARIADNE_ALLOWED_HOSTS: 127.0.0.1:${ARIADNE_PORT:-3100},localhost:${ARIADNE_PORT:-3100}
+      # This stack is the public instance: it relays, and announces the tunnel origin.
+      ARIADNE_RELAY: ${ARIADNE_RELAY:-server}
+      ARIADNE_PUBLIC_URL: ${ARIADNE_PUBLIC_URL:-}
+      ARIADNE_PEER_KEY_FILE: /app/secrets/peer_key
       LOG_LEVEL: ${LOG_LEVEL:-info}
+    volumes: [peer_key:/app/secrets]
     # Map you to the image's node user.
     userns_mode: "keep-id:uid=1000,gid=1000"
     ports:
@@ -52,9 +57,22 @@ services:
       timeout: 5s
       retries: 20
 
+  # Point the tunnel's public hostname at http://app:3100 (HTTP, WebSockets included).
+  # The UI stays on loopback; federation uses wss://<ARIADNE_PUBLIC_URL host>/p2p.
+  cloudflared:
+    image: docker.io/cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?Set CLOUDFLARE_TUNNEL_TOKEN in .env}
+    depends_on:
+      app: { condition: service_healthy }
+    networks: [frontend]
+
 networks:
   frontend: {}
   backend: { internal: true }
 
 volumes:
   postgres_data: {}
+  peer_key: {}

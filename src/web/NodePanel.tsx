@@ -13,7 +13,9 @@ function useOps() {
   const run = async (ops: Op[]) => {
     setError(null);
     try {
-      return await api.ops(ops);
+      const r = await api.ops(ops);
+      if (r.pending?.length) setError(r.pending.map((p) => p.error ?? 'Waiting on the instance that owns this.').join(' '));
+      return r;
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       return null;
@@ -72,7 +74,7 @@ export function NewNodeForm({ onCreated }: { onCreated(id: string): void }) {
 // ================================================================ view / edit
 
 export function NodePanel({ id, onSelect, onClose }: { id: string; onSelect(id: string | null): void; onClose(): void }) {
-  const { version, setFocus, focus, impact } = useApp();
+  const { version, setFocus, focus, impact, selfPeer } = useApp();
   const [d, setD] = useState<NodeDetail | null>(null);
   const { error, run } = useOps();
   useEffect(() => {
@@ -107,6 +109,11 @@ export function NodePanel({ id, onSelect, onClose }: { id: string; onSelect(id: 
         {n.kind === 'task' && (
           <span className="tag" title="How many tasks (directly or indirectly) need this one">
             impact {impact.get(id) ?? 0}
+          </span>
+        )}
+        {n.home && n.home !== selfPeer && (
+          <span className="tag" title={n.home}>
+            homed elsewhere{d.pending ? ' · pending' : ''}
           </span>
         )}
         <button className={`btn small ${focus === id ? 'on' : ''}`} onClick={() => setFocus(focus === id ? null : id)}>

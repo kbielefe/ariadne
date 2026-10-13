@@ -29,6 +29,7 @@ export const OPEN_ATTRS: readonly NodeKind[] = ['task'];
 const ActorAttrs = z
   .object({
     areas: z.array(z.string()).describe('What this person or team owns or can help with'),
+    peer: z.string().describe('Ariadne peer id, when this person stands for an instance'),
   })
   .partial();
 export const PersonAttrs = ActorAttrs;
@@ -60,6 +61,8 @@ export const Node = z.object({
   status: TaskStatus.nullable(),
   attrs: z.record(z.string(), z.unknown()),
   version: z.number().int(),
+  /** Peer id of the instance that commits this node. Null on rows from before federation. */
+  home: z.string().nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -128,4 +131,4 @@ export type Op = z.infer<typeof Op>;
 export const Ops = z.array(Op).min(1);
 
 /** Where a change came from. Recorded in the audit log. */
-export type Via = 'ui' | 'mcp';
+export type Via = 'ui' | 'mcp' | 'sync';

@@ -1,0 +1,34 @@
+[Unit]
+Description=Ariadne server
+Requires=ariadne-app-build.service ariadne-postgres.service ariadne-frontend-network.service ariadne-backend-network.service ariadne-peer-volume.service
+After=ariadne-app-build.service ariadne-postgres.service ariadne-frontend-network.service ariadne-backend-network.service ariadne-peer-volume.service
+
+[Container]
+ContainerName=ariadne-app
+# Compose and the tunnel origin use this DNS name.
+NetworkAlias=app
+Image=ariadne-app.build
+Network=ariadne-frontend.network
+Network=ariadne-backend.network
+PublishPort=127.0.0.1:3100:3100
+Volume=ariadne-peer.volume:/app/secrets:U
+UserNS=keep-id:uid=1000,gid=1000
+ReadOnly=true
+Tmpfs=/tmp
+NoNewPrivileges=true
+DropCapability=ALL
+EnvironmentFile=%t/ariadne-app.env
+HealthCmd=wget -q -O /dev/null http://127.0.0.1:3100/health/ready
+HealthInterval=15s
+HealthTimeout=5s
+HealthRetries=5
+HealthStartPeriod=20s
+Notify=healthy
+
+[Service]
+ExecStartPre=/bin/sh %h/source/ariadne/quadlet/render-env.sh app %t/ariadne-app.env
+Restart=on-failure
+TimeoutStartSec=900
+
+[Install]
+WantedBy=default.target

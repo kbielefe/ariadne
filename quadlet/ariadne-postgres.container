@@ -1,0 +1,26 @@
+[Unit]
+Description=Ariadne PostgreSQL
+Requires=ariadne-backend-network.service ariadne-postgres-volume.service
+After=ariadne-backend-network.service ariadne-postgres-volume.service
+
+[Container]
+ContainerName=ariadne-postgres
+NetworkAlias=postgres
+Image=artifactory.adtran.com/docker/postgres:17.6-alpine@sha256:747d5ed1fdeeb124b880fbe3d7c6557d2c4064ae41d6b6297d417882effce4be
+Network=ariadne-backend.network
+Volume=ariadne-postgres.volume:/var/lib/postgresql/data
+Environment=POSTGRES_USER=ariadne
+Environment=POSTGRES_DB=ariadne
+EnvironmentFile=%t/ariadne-postgres.env
+HealthCmd=pg_isready -U ariadne -d ariadne
+HealthInterval=5s
+HealthTimeout=5s
+HealthRetries=20
+Notify=healthy
+
+[Service]
+ExecStartPre=/bin/sh %h/source/ariadne/quadlet/render-env.sh postgres %t/ariadne-postgres.env
+Restart=on-failure
+
+[Install]
+WantedBy=default.target

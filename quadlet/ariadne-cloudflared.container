@@ -1,0 +1,20 @@
+[Unit]
+Description=Ariadne Cloudflare tunnel
+Requires=ariadne-app.service ariadne-frontend-network.service
+After=ariadne-app.service ariadne-frontend-network.service
+
+[Container]
+ContainerName=ariadne-cloudflared
+Image=docker.io/cloudflare/cloudflared:latest
+Exec=tunnel --no-autoupdate run
+Network=ariadne-frontend.network
+# The tunnel's public hostname must serve http://app:3100.
+EnvironmentFile=%t/ariadne-tunnel.env
+
+[Service]
+ExecStartPre=/bin/sh %h/source/ariadne/quadlet/render-env.sh tunnel %t/ariadne-tunnel.env
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=default.target

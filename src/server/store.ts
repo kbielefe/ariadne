@@ -18,6 +18,8 @@ export const who = (actor: string | null, via: Via): Who => ({ actor, via, chang
 export interface Ctx {
   tx: Q;
   who: Who;
+  /** Peer id stamped on nodes this transaction creates. */
+  home?: string | null;
 }
 
 export class NotFound extends Error {}
@@ -37,6 +39,7 @@ export function mapNode(r: Record<string, unknown>): Node {
     status: (r.status as Node['status']) ?? null,
     attrs: (r.attrs as Record<string, unknown>) ?? {},
     version: r.version as number,
+    home: (r.home as string) ?? null,
     createdAt: iso(r.created_at)!,
     updatedAt: iso(r.updated_at)!,
   };
@@ -102,12 +105,13 @@ async function snapshot(q: Q, entity: Entity, id: string): Promise<Record<string
 // ---------------------------------------------------------------- node writes
 
 export async function insertNode(c: Ctx, n: { kind: string; title: string; body?: string; status?: string | null; attrs?: Record<string, unknown> }): Promise<Node> {
-  const r = await c.tx.query('INSERT INTO nodes (kind, title, body, status, attrs) VALUES ($1, $2, $3, $4, $5) RETURNING *', [
+  const r = await c.tx.query('INSERT INTO nodes (kind, title, body, status, attrs, home) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *', [
     n.kind,
     n.title,
     n.body ?? '',
     n.kind === 'task' ? (n.status ?? 'open') : null,
     JSON.stringify(n.attrs ?? {}),
+    c.home ?? null,
   ]);
   const node = mapNode(r.rows[0]);
   await audit(c, 'node', node.id, 'create', null, await snapshot(c.tx, 'node', node.id));
