@@ -2,8 +2,8 @@ import cytoscape, { type Core as Cy, type ElementDefinition } from 'cytoscape';
 import fcose from 'cytoscape-fcose';
 import { ArrowDownUp, Crosshair, Expand, Maximize, Network, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Plus, RefreshCw } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { type Direction, readiness, reachable } from '../shared/graph';
-import { EDGE_RULES, type EdgeKind, EdgeKind as EdgeKinds, type NodeKind } from '../shared/model';
+import { type Direction, readiness, reachable, taskState } from '../shared/graph';
+import { EDGE_RULES, type EdgeKind, EdgeKind as EdgeKinds, type NodeKind, USER_ID } from '../shared/model';
 import { remember } from './api';
 import { useApp } from './App';
 import { KindIcon } from './bits';
@@ -113,8 +113,7 @@ export function GraphView({ selected, onSelect }: { selected: string | null; onS
       if (n.kind === 'task') {
         classes.push(n.status ?? 'open');
         if (n.status === 'open') {
-          const r = readiness(n, graph.edges, byId);
-          classes.push(r.ready ? 'ready' : r.external.length ? 'blocked' : 'waiting');
+          classes.push(taskState(readiness(n, graph.edges, byId)));
         }
         if (!graph.edges.some((e) => e.kind === 'needs' && e.dst === id)) classes.push('root');
       }
@@ -125,7 +124,7 @@ export function GraphView({ selected, onSelect }: { selected: string | null; onS
       const badge = f.showImpact && n.kind === 'task' ? (impact.get(id) ?? 0) : undefined;
       els.push({ group: 'nodes', data: { id, label, title: n.title, order: order.get(id), badge }, classes: classes.join(' ') });
     }
-    for (const e of edges) if (ids.has(e.src) && ids.has(e.dst)) els.push({ group: 'edges', data: { id: e.id, source: e.src, target: e.dst, label: e.kind === 'needs' ? '' : EDGE_RULES[e.kind].label, order: order.get(e.dst) }, classes: e.kind });
+    for (const e of edges) if (ids.has(e.src) && ids.has(e.dst)) els.push({ group: 'edges', data: { id: e.id, source: e.src, target: e.dst, label: e.kind === 'needs' ? '' : EDGE_RULES[e.kind].label, order: order.get(e.dst) }, classes: e.kind === 'waits_on' && e.dst === USER_ID ? `${e.kind} to-you` : e.kind });
     return els;
   }, [graph, byId, impact, f, focus, sort, selfPeer]);
 
@@ -328,6 +327,8 @@ function styles(): cytoscape.StylesheetJson {
   const good = css('--good', '#15803d');
   const blocked = css('--blocked', '#ca8a04');
   const blockedSoft = css('--blocked-soft', '#fef9c3');
+  const yours = css('--yours', '#7c3aed');
+  const yoursSoft = css('--yours-soft', '#ede9fe');
   return [
     {
       selector: 'node',
@@ -352,6 +353,8 @@ function styles(): cytoscape.StylesheetJson {
     { selector: 'node.foreign', style: { 'border-style': 'dashed', 'border-width': 2.5 } },
     // Blocked outside the user's control (a review, a CI build, a merge): yellow, so it stands out from waiting on subtasks.
     { selector: 'node.task.blocked', style: { 'border-color': blocked, 'border-width': 3, 'background-color': blockedSoft } },
+    // Waits only on you (a review, a decision): violet, so your queue stands out from what an agent can take (green).
+    { selector: 'node.task.yours', style: { 'border-color': yours, 'border-width': 3, 'background-color': yoursSoft } },
     { selector: 'node.task.root', style: { 'font-weight': 'bold', 'border-width': 3 } },
     { selector: 'node.task.done, node.task.dropped', style: { color: muted, opacity: 0.6 } },
     { selector: 'node.task.dropped', style: { 'text-decoration': 'line-through' } as never },
@@ -380,6 +383,7 @@ function styles(): cytoscape.StylesheetJson {
     { selector: 'edge.uses', style: { 'line-style': 'dashed' } },
     { selector: 'edge.involves', style: { 'line-style': 'dotted' } },
     { selector: 'edge.waits_on', style: { width: 2.5, 'line-color': blocked, 'target-arrow-color': blocked, color: blocked } },
+    { selector: 'edge.waits_on.to-you', style: { 'line-color': yours, 'target-arrow-color': yours, color: yours } },
     { selector: 'edge:selected', style: { 'line-color': accent, 'target-arrow-color': accent, width: 3 } },
   ];
 }

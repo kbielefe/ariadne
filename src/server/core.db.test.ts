@@ -42,7 +42,7 @@ describe('graph', () => {
       { op: 'create_edge', src: '$root', kind: 'needs', dst: '$sub' },
     ]);
     const d = await core.nodeDetail(t.root!);
-    expect(d.readiness).toEqual({ ready: false, waitingOn: [t.sub], external: [] });
+    expect(d.readiness).toEqual({ ready: false, waitingOn: [t.sub], external: [], state: 'waiting' });
   });
 
   it('a task that waits_on someone is blocked, not ready, and not reported ready', async () => {
@@ -53,7 +53,7 @@ describe('graph', () => {
       { op: 'create_edge', src: '$review', kind: 'needs', dst: '$pr' },
       { op: 'create_edge', src: '$review', kind: 'waits_on', dst: '$ann' },
     ]);
-    expect((await core.nodeDetail(t.review!)).readiness).toEqual({ ready: false, waitingOn: [t.pr], external: [t.ann] });
+    expect((await core.nodeDetail(t.review!)).readiness).toEqual({ ready: false, waitingOn: [t.pr], external: [t.ann], state: 'blocked' });
     await core.ops(asUser(), [{ op: 'update_node', id: t.pr!, status: 'done' }]);
     expect(await core.newlyReady(db, [t.pr!])).toEqual([]);
     await expect(core.ops(asUser(), [{ op: 'create_edge', src: t.review, kind: 'waits_on', dst: t.pr }])).rejects.toThrow(/waits_on goes from task to/);

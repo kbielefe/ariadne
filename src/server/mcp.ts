@@ -7,7 +7,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { CallToolRequestSchema, type CallToolResult, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
-import { type Direction, reachable } from '../shared/graph';
+import { type Direction, reachable, readiness, taskState } from '../shared/graph';
 import { EdgeKind, NodeKind, Op, TaskStatus } from '../shared/model';
 import { ContextBuilder, type TaskContext } from './context';
 import type { Core } from './core';
@@ -39,6 +39,15 @@ on what, without opening task bodies. A task with a waits_on edge is blocked, no
 when the wait is over, and add a new leaf for the next wait (review, then CI, then merge). A dropped need counts as satisfied, so drop only work that will not happen. When work moves (e.g. PRs combined),
 retitle the task to what it is now and re-point its edges.
 
+Waiting on the user: the person node "You" (id 00000000-0000-4000-8000-000000000001) is the user. When work needs
+the user's own action, add a leaf "Review: <what>" (a branch to push, a PR to open, a draft to send, work to check) or
+"Decide: <question>" (a choice only they make, or a provisional decision to confirm), linked waits_on You and needed by
+the task it gates. Put the exact command or draft in its body. Do this instead of leaving it only in a Status line, so
+the user's queue is visible in the graph. Close it when the user acts. Each open task has a state (graph, get_node):
+ready means anyone, an agent included, can take it; yours means it waits only on the user (drawn violet); blocked
+means it waits on someone or something else (yellow); waiting means it waits on open subtasks. graph from You,
+direction up, kinds [waits_on] lists the user's queue. Pick up ready tasks; never work around a yours one.
+
 Titles and bodies: prefix titles with the repo or area ("PDP CI: ...") and name the result, not the activity. Body:
 What/Why, then **Done when:**. Keep one "**Status (YYYY-MM-DD):**" line for where it stands now; replace it on each
 update instead of appending progress lines (history keeps the old ones). When closing, add "**Result (YYYY-MM-DD):**"
@@ -50,8 +59,8 @@ Decisions: when the user (or anyone) makes a decision about a task, record it in
 "**Decision (Name, YYYY-MM-DD):** what was decided, and why in a few words" (update_node; keep the rest of the body).
 Put it on the task it shapes. search with decisions: true finds them; check there before re-asking the user. If you
 must choose without the user (e.g. working unattended), write "**Decision (<agent>, provisional, YYYY-MM-DD):** chose A
-over B, why. Flip: how to reverse." When the user confirms or changes it, rewrite it as their own Decision line,
-without Flip.
+over B, why. Flip: how to reverse." and add a "Decide: confirm <choice>" leaf for it (see Waiting on the user). When
+the user confirms or changes it, rewrite it as their own Decision line, without Flip, and close the leaf.
 
 When closing tasks makes others ready, apply_ops lists them as nowReady: offer the user the next one.`;
 
@@ -113,7 +122,7 @@ const tools: Tool[] = [
   },
   {
     name: 'graph',
-    description: 'The subgraph reachable from a node (down = what it needs/uses/involves; up = what needs it). Without "from": root tasks, people, teams, and resources.',
+    description: 'The subgraph reachable from a node (down = what it needs/uses/involves; up = what needs it). Without "from": root tasks, people, teams, and resources. Each open task has a state: ready (anyone, an agent included, can take it), yours (waits only on the user), blocked (waits on someone or something else), or waiting (on open subtasks).',
     input: z.object({
       from: z.uuid().optional(),
       direction: z.enum(['down', 'up', 'both']).optional(),
@@ -130,7 +139,7 @@ const tools: Tool[] = [
       else ids = new Set(g.nodes.filter((n) => n.kind !== 'task' || !g.edges.some((e) => e.kind === 'needs' && e.dst === n.id)).map((n) => n.id));
       if (!a.includeClosed) for (const id of ids) if (byId.get(id)?.status && byId.get(id)!.status !== 'open' && id !== a.from) ids.delete(id);
       return {
-        nodes: [...ids].map((id) => byId.get(id)!).filter(Boolean).map((n) => ({ id: n.id, kind: n.kind, title: n.title, status: n.status })),
+        nodes: [...ids].map((id) => byId.get(id)!).filter(Boolean).map((n) => ({ id: n.id, kind: n.kind, title: n.title, status: n.status, ...(n.status === 'open' ? { state: taskState(readiness(n, g.edges, byId)) } : {}) })),
         edges: g.edges.filter((e) => ids.has(e.src) && ids.has(e.dst)).map((e) => ({ id: e.id, src: e.src, kind: e.kind, dst: e.dst, ...(e.note ? { note: e.note } : {}) })),
       };
     },

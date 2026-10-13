@@ -12,6 +12,8 @@
   --warn: #b45309;
   --blocked: #ca8a04;
   --blocked-soft: #fef9c3;
+  --yours: #7c3aed;
+  --yours-soft: #ede9fe;
   --danger: #c0352b;
   --person: #eef2ff;
   --team: #fdf3d8;
@@ -35,6 +37,8 @@
     --warn: #f0a14a;
     --blocked: #facc15;
     --blocked-soft: #3a3412;
+    --yours: #c4b5fd;
+    --yours-soft: #2e1f4d;
     --danger: #ff7a70;
     --person: #252b45;
       --team: #3a3220;
@@ -290,6 +294,9 @@ code,
 }
 .tag.blocked {
   color: var(--blocked);
+}
+.tag.yours {
+  color: var(--yours);
 }
 .row {
   display: flex;

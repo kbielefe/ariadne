@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import type { TaskState } from '../shared/graph';
 import type { Edge, Node, Op } from '../shared/model';
 
 export interface GraphData {
@@ -10,7 +11,7 @@ export interface NodeDetail {
   edges: Edge[];
   neighbors: Node[];
   pending?: boolean;
-  readiness?: { ready: boolean; waitingOn: string[]; external: string[] };
+  readiness?: { ready: boolean; waitingOn: string[]; external: string[]; state: TaskState };
 }
 
 export interface PendingOp {

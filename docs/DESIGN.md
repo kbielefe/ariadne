@@ -43,10 +43,13 @@ lines, branch scopes, and undo.
 | `involves` | task → person/team | Coordinate with them |
 | `reports_to` | person/team → person/team | Supervisor. Acyclic |
 | `member_of` | person/team → team | Acyclic |
-| `waits_on` | task → person/team/resource | Blocked outside your control: a PR review, CI build, merge, or answer. Drawn yellow |
+| `waits_on` | task → person/team/resource | Blocked outside your control: a PR review, CI build, merge, or answer. Drawn yellow. To You: waiting on your own action, drawn violet |
 
 **Computed, not stored:** whether a task is ready (open, everything it needs is closed, and no `waits_on`) and whether
-it's a root (no task needs it). When `apply_ops` closes tasks, its answer lists the tasks that just
+it's a root (no task needs it). An open task's **state** says who can move it now: `ready` (anyone, an agent included;
+green border), `yours` (it waits only on You; violet), `blocked` (it waits on another person, team, or resource;
+yellow), or `waiting` (on open subtasks; dashed). MCP `graph` and `get_node` return it, so an agent picks `ready` work
+and leaves `yours` to you. When `apply_ops` closes tasks, its answer lists the tasks that just
 became ready (`nowReady`), so the next step is never silent.
 
 **Waiting on someone:** an external blocker is a leaf task ("Waiting on review: <repo> PR #48") that
@@ -54,6 +57,13 @@ became ready (`nowReady`), so the next step is never silent.
 (yellow in the graph), not ready. Closing it unblocks its parents and reports them in `nowReady`; the
 edge stays as history. Why a leaf and not an edge on the blocked task: closing a task keeps the history
 and the `nowReady` signal, where deleting an edge would lose both.
+
+**Waiting on you:** the same shape, pointed at You. When an agent finishes work that needs your action, it adds
+a leaf "Review: <what>" (a branch to push, a PR to open, a draft to send) or "Decide: <question>" (including a
+provisional decision to confirm) that `waits_on` You, with the exact command or draft in its body. Your queue is
+`graph` from You, up, `waits_on`; in the graph view it's the violet tasks. Why You and not a new attr or status: the
+edge already means "blocked until this one acts", the leaf keeps history and `nowReady`, and nothing new has to be
+kept in sync.
 
 **Inheritance:** a task's context includes the guidance, resources, and `involves` people of every
 task that (transitively) needs it. Attach a repo to a root task once, and all its subtasks get it.

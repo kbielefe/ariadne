@@ -1,5 +1,5 @@
 // The application core: every change goes through here, in one transaction, then the hub is told.
-import { readiness } from '../shared/graph';
+import { readiness, taskState } from '../shared/graph';
 import type { Edge, Node } from '../shared/model';
 import { type Db, withTx } from './db';
 import type { ApplyOutcome, Federation } from './federation';
@@ -75,6 +75,8 @@ export class Core {
     const others = await Promise.all([...new Set(edges.map((e) => (e.src === id ? e.dst : e.src)))].map((n) => s.getNode(this.db, n)));
     const byId = new Map([node, ...others].map((n) => [n.id, n]));
     const pending = this.federation ? (await import('./federation/repo')).pendingForNode(this.db, id) : false;
-    return { node, edges, neighbors: others, ...(pending ? { pending: true } : {}), ...(node.kind === 'task' ? { readiness: readiness(node, all, byId) } : {}) };
+    return { node, edges, neighbors: others, ...(pending ? { pending: true } : {}), ...(node.kind === 'task' ? { readiness: withState(readiness(node, all, byId)) } : {}) };
   }
 }
+
+const withState = (r: ReturnType<typeof readiness>) => ({ ...r, state: taskState(r) });

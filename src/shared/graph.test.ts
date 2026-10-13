@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { impacts, readiness } from './graph';
-import type { Edge, Node, TaskStatus } from './model';
+import { impacts, readiness, taskState } from './graph';
+import { type Edge, type Node, type TaskStatus, USER_ID } from './model';
 
 const needs = (src: string, dst: string): Edge => ({ id: `${src}>${dst}`, src, kind: 'needs', dst, note: '', createdAt: '' });
 const tasks = (statuses: Record<string, TaskStatus>) =>
@@ -38,5 +38,31 @@ describe('readiness', () => {
     const edges = [needs('w', 'done'), { ...needs('w', 'ann'), kind: 'waits_on' as const }];
     expect(readiness(byId.get('w')!, edges, byId)).toEqual({ ready: false, waitingOn: [], external: ['ann'] });
     expect(readiness(byId.get('w')!, [needs('w', 'done')], byId)).toEqual({ ready: true, waitingOn: [], external: [] });
+  });
+});
+
+describe('taskState', () => {
+  const waitsOn = (src: string, dst: string): Edge => ({ ...needs(src, dst), kind: 'waits_on' });
+  const state = (edges: Edge[], statuses: Record<string, TaskStatus> = { t: 'open', sub: 'open', done: 'done' }) => {
+    const byId = tasks(statuses);
+    return taskState(readiness(byId.get('t')!, edges, byId));
+  };
+
+  it('ready: nothing open below and no waits_on, so an agent can take it', () => {
+    expect(state([needs('t', 'done')])).toBe('ready');
+  });
+
+  it('yours: waits only on You', () => {
+    expect(state([waitsOn('t', USER_ID)])).toBe('yours');
+  });
+
+  it('blocked: waits on anyone else, even when it also waits on You', () => {
+    expect(state([waitsOn('t', 'ann')])).toBe('blocked');
+    expect(state([waitsOn('t', 'ann'), waitsOn('t', USER_ID)])).toBe('blocked');
+  });
+
+  it('waiting: open subtasks come before your turn', () => {
+    expect(state([needs('t', 'sub')])).toBe('waiting');
+    expect(state([needs('t', 'sub'), waitsOn('t', USER_ID)])).toBe('waiting');
   });
 });

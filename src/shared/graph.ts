@@ -1,5 +1,5 @@
 // Pure graph helpers, used by the server (context packs, MCP) and the web UI (filters).
-import type { Edge, EdgeKind, Node } from './model';
+import { type Edge, type EdgeKind, type Node, USER_ID } from './model';
 
 export type Direction = 'down' | 'up' | 'both';
 
@@ -98,6 +98,22 @@ export function readiness(task: Node, edges: readonly Edge[], byId: ReadonlyMap<
   const waitingOn = edges.filter((e) => e.kind === 'needs' && e.src === task.id && byId.get(e.dst)?.status === 'open').map((e) => e.dst);
   const external = edges.filter((e) => e.kind === 'waits_on' && e.src === task.id).map((e) => e.dst);
   return { ready: task.status === 'open' && waitingOn.length === 0 && external.length === 0, waitingOn, external };
+}
+
+/**
+ * Who can move an open task now:
+ * - `ready`: anyone, an agent included (nothing open below it, no waits_on).
+ * - `yours`: only the user. It waits on You (a review, a decision, a remote step) and on nothing else.
+ * - `blocked`: someone or something outside the user's control (waits_on another person, team, or resource).
+ * - `waiting`: its open subtasks.
+ */
+export type TaskState = 'ready' | 'yours' | 'blocked' | 'waiting';
+
+export function taskState(r: Readiness): TaskState {
+  if (r.ready) return 'ready';
+  if (r.external.some((x) => x !== USER_ID)) return 'blocked';
+  if (r.external.length && !r.waitingOn.length) return 'yours';
+  return 'waiting';
 }
 
 /** Would adding src -kind-> dst close a cycle? (Is src already reachable from dst?) */
