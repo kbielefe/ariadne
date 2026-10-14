@@ -329,11 +329,12 @@ function RawAttrs({ node, save }: { node: Node; save(p: { attrs: Record<string, 
 // ---------------------------------------------------------------- edges
 
 /** How an edge reads from its destination's side. */
-const incomingLabel = (k: EdgeKind) => (k === 'needs' ? 'needed by' : k === 'reports_to' ? 'supervises' : k === 'member_of' ? 'has member' : k === 'waits_on' ? 'blocks' : `${EDGE_RULES[k].label} (from)`);
+const incomingLabel = (k: EdgeKind) => (k === 'needs' ? 'needed by' : k === 'reports_to' ? 'supervises' : k === 'member_of' ? 'has member' : k === 'waits_on' ? 'blocks' : k === 'working_on' ? 'worked on by' : `${EDGE_RULES[k].label} (from)`);
 
-/** An open task's tag: ready, waiting on you, blocked on who or what (outside the user's control), or how many subtasks it waits on. */
+/** An open task's tag: ready, theirs (who is working on it), waiting on you, blocked on who or what (outside the user's control), or how many subtasks it waits on. */
 function readinessLabel({ readiness: r, neighbors }: NodeDetail): string {
   if (!r || r.ready) return 'ready';
+  if (r.state === 'theirs') return `theirs: ${r.theirs.map((x) => neighbors.find((n) => n.id === x)?.title ?? '?').join(', ')}`;
   if (r.state === 'yours') return 'waiting on you';
   if (r.state === 'blocked') return `blocked on ${r.external.filter((x) => x !== USER_ID).map((x) => neighbors.find((n) => n.id === x)?.title ?? '?').join(', ')}`;
   return `waiting on ${r.waitingOn.length}`;

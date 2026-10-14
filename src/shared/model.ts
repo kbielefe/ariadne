@@ -81,7 +81,7 @@ export type NodeWithPrivate = Node & { privateNotes: string };
 
 // ---------------------------------------------------------------- edges
 
-export const EdgeKind = z.enum(['needs', 'uses', 'involves', 'reports_to', 'member_of', 'waits_on']);
+export const EdgeKind = z.enum(['needs', 'uses', 'involves', 'reports_to', 'member_of', 'waits_on', 'working_on']);
 export type EdgeKind = z.infer<typeof EdgeKind>;
 
 /** Allowed endpoint kinds per edge kind, and whether the edge must stay acyclic. */
@@ -92,6 +92,8 @@ export const EDGE_RULES: Record<EdgeKind, { src: readonly NodeKind[]; dst: reado
   reports_to: { src: ACTOR_KINDS, dst: ACTOR_KINDS, acyclic: true, label: 'reports to' },
   member_of: { src: ACTOR_KINDS, dst: ['team'], acyclic: true, label: 'member of' },
   waits_on: { src: ['task'], dst: [...ACTOR_KINDS, 'resource'], acyclic: false, label: 'waiting on' },
+  // "Will is working on X": the opposite direction of involves, which stays "coordinate with".
+  working_on: { src: ACTOR_KINDS, dst: ['task'], acyclic: false, label: 'working on' },
 };
 
 export const Edge = z.object({

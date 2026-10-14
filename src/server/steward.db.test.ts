@@ -7,7 +7,7 @@ import { freshCore } from '../test/db';
 import { registerApi } from './api';
 import type { Core } from './core';
 import type { Db } from './db';
-import type { Batch, Item } from './steward';
+import { type Batch, dropExpiredIntents, type Item } from './steward';
 import { who } from './store';
 
 let db: Db;
@@ -183,7 +183,7 @@ describe('steward receive', () => {
     await ops([{ op: 'update_node', id: USER_ID, title: 'Karl', attrs: { areas: ['PDP'] } }]);
     const d = await backend('describe');
     expect(d.code).toBe(0);
-    expect(d.out).toEqual({ name: 'ariadne', owner: 'Karl', areas: ['PDP'], repos: ['Adtran-Kairos/policy-decision-point'], capabilities: ['ticket', 'answer'] });
+    expect(d.out).toEqual({ name: 'ariadne', owner: 'Karl', areas: ['PDP'], repos: ['Adtran-Kairos/policy-decision-point'], capabilities: ['ticket', 'answer', 'intent'] });
     expect((await backend('frobnicate', {})).code).toBe(3);
 
     const browser = await fetch(`${base}/api/steward/publish`, { method: 'POST', headers: { 'content-type': 'application/json', origin: base }, body: '{}' });
@@ -193,5 +193,65 @@ describe('steward receive', () => {
     expect(otherHost.statusCode).toBe(421);
     const bad = await fetch(`${base}/api/steward/receive`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ bogus: 1 }) });
     expect(bad.status).toBe(400);
+  });
+});
+
+describe('steward intents', () => {
+  const BRYAN = '12D3KooWBryan';
+  const now = () => Math.floor(Date.now() / 1000);
+  const intent = (o: Record<string, unknown> = {}) => ({ id: 'i1', kind: 'intent', title: 'PDP: cache entitlements', body: 'Caching lookups per session.', repos: ['Adtran-Kairos/policy-decision-point'], branch: 'bw/cache', paths: ['src/pdp/cache.py'], updated_at: now(), expires_at: now() + 3600, ...o });
+
+  it('lands as a theirs task off the teammate\'s person node (created if missing), and updates in place', async () => {
+    const { localRef } = await steward<{ localRef: string }>('receive', { intent: intent(), from: BRYAN, from_name: 'Bryan' });
+    const d = await core.nodeDetail(localRef);
+    expect(d.node).toMatchObject({ title: 'Intent (Bryan): PDP: cache entitlements', status: 'open' });
+    expect(d.node.body).toContain('**Branch:** bw/cache');
+    expect(d.node.attrs.steward).toMatchObject({ kind: 'intent', peer: BRYAN, itemId: 'i1' });
+    expect(Date.parse((d.node.attrs.steward as { expiresAt: string }).expiresAt)).toBeGreaterThan(Date.now());
+    const bryan = d.neighbors.find((n) => n.kind === 'person')!;
+    expect(bryan).toMatchObject({ title: 'Bryan', attrs: { peer: BRYAN } });
+    expect(d.edges).toEqual([expect.objectContaining({ src: bryan.id, kind: 'working_on', dst: localRef })]);
+    // Nothing below it and nothing it waits on, yet never ready for you.
+    expect(d.readiness).toMatchObject({ ready: false, state: 'theirs', theirs: [bryan.id] });
+
+    const again = await steward<{ localRef: string }>('receive', { intent: intent({ title: 'PDP: cache entitlements per tenant' }), from: BRYAN });
+    expect(again.localRef).toBe(localRef);
+    expect((await core.nodeDetail(localRef)).node.title).toBe('Intent (Bryan): PDP: cache entitlements per tenant');
+    const g = await core.graph();
+    expect(g.nodes.filter((n) => n.title.startsWith('Intent ('))).toHaveLength(1);
+    expect(g.edges.filter((e) => e.kind === 'working_on')).toHaveLength(1);
+    // Never published back: it is Bryan's.
+    expect((await steward<Batch>('publish')).upserts).toEqual([]);
+  });
+
+  it('is dropped on expiry: at once if it arrives expired, otherwise by the sweep', async () => {
+    const stale = await steward<{ localRef: string }>('receive', { intent: intent({ id: 'old', expires_at: now() - 60 }), from: BRYAN });
+    expect((await core.nodeDetail(stale.localRef)).node.status).toBe('dropped');
+
+    const { localRef } = await steward<{ localRef: string }>('receive', { intent: intent(), from: BRYAN });
+    expect(await dropExpiredIntents(core)).toEqual([]);
+    expect(await dropExpiredIntents(core, new Date(Date.now() + 2 * 3600_000))).toEqual([localRef]);
+    const d = await core.nodeDetail(localRef);
+    expect(d.node.status).toBe('dropped');
+    expect(d.node.body).toContain('the intent expired; dropped by steward');
+    // The author closing it closes it here too; a renewed one reopens.
+    await steward('receive', { intent: intent({ expires_at: now() + 7200 }), from: BRYAN });
+    expect((await core.nodeDetail(localRef)).node.status).toBe('open');
+    await steward('receive', { intent: intent({ expires_at: now() + 7200, state: 'done' }), from: BRYAN });
+    expect((await core.nodeDetail(localRef)).node.status).toBe('done');
+  });
+
+  it('a task someone else is working on is never reported as newly ready', async () => {
+    const r = await ops([
+      { op: 'create_node', ref: 'ann', kind: 'person', title: 'Ann' },
+      { op: 'create_node', ref: 't', kind: 'task', title: 'Ann\'s rollout' },
+      { op: 'create_node', ref: 'sub', kind: 'task', title: 'Prep' },
+      { op: 'create_edge', src: '$t', kind: 'needs', dst: '$sub' },
+      { op: 'create_edge', src: '$ann', kind: 'working_on', dst: '$t' },
+    ]);
+    const sub = r.find((x) => x.ref === 'sub')!.id;
+    expect((await core.apply(who(USER_ID, 'ui'), [{ op: 'update_node', id: sub, status: 'done' }])).nowReady).toEqual([]);
+    // working_on goes from a person or team to a task only.
+    await expect(ops([{ op: 'create_edge', src: sub, kind: 'working_on', dst: r.find((x) => x.ref === 't')!.id }])).rejects.toThrow(/working_on goes from person\/team to task/);
   });
 });

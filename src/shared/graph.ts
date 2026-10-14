@@ -92,12 +92,15 @@ export interface Readiness {
   waitingOn: string[];
   /** who or what outside the user's control it waits on (waits_on edges): blocked until the task is closed */
   external: string[];
+  /** who other than You is working on it (working_on edges into it): theirs, so never ready for the user */
+  theirs: string[];
 }
 
 export function readiness(task: Node, edges: readonly Edge[], byId: ReadonlyMap<string, Node>): Readiness {
   const waitingOn = edges.filter((e) => e.kind === 'needs' && e.src === task.id && byId.get(e.dst)?.status === 'open').map((e) => e.dst);
   const external = edges.filter((e) => e.kind === 'waits_on' && e.src === task.id).map((e) => e.dst);
-  return { ready: task.status === 'open' && waitingOn.length === 0 && external.length === 0, waitingOn, external };
+  const theirs = edges.filter((e) => e.kind === 'working_on' && e.dst === task.id && e.src !== USER_ID).map((e) => e.src);
+  return { ready: task.status === 'open' && waitingOn.length === 0 && external.length === 0 && theirs.length === 0, waitingOn, external, theirs };
 }
 
 /**
@@ -106,11 +109,14 @@ export function readiness(task: Node, edges: readonly Edge[], byId: ReadonlyMap<
  * - `yours`: only the user. It waits on You (a review, a decision, a remote step) and on nothing else.
  * - `blocked`: someone or something outside the user's control (waits_on another person, team, or resource).
  * - `waiting`: its open subtasks.
+ * - `theirs`: someone other than You is working on it (working_on), e.g. a teammate's steward intent. Never ready for
+ *   the user or their agents, whatever else it waits on.
  */
-export type TaskState = 'ready' | 'yours' | 'blocked' | 'waiting';
+export type TaskState = 'ready' | 'yours' | 'blocked' | 'waiting' | 'theirs';
 
 export function taskState(r: Readiness): TaskState {
   if (r.ready) return 'ready';
+  if (r.theirs.length) return 'theirs';
   if (r.external.some((x) => x !== USER_ID)) return 'blocked';
   if (r.external.length && !r.waitingOn.length) return 'yours';
   return 'waiting';

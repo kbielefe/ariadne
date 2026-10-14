@@ -45,11 +45,14 @@ lines, branch scopes, and undo.
 | `reports_to` | person/team → person/team | Supervisor. Acyclic |
 | `member_of` | person/team → team | Acyclic |
 | `waits_on` | task → person/team/resource | Blocked outside your control: a PR review, CI build, merge, or answer. Drawn yellow. To You: waiting on your own action, drawn violet |
+| `working_on` | person/team → task | They are doing it ("Will is working on X"; migration `010_working_on.sql`). The opposite direction of `involves`, which stays "coordinate with". Drawn muted and dashed |
 
 **Computed, not stored:** whether a task is ready (open, everything it needs is closed, and no `waits_on`) and whether
 it's a root (no task needs it). An open task's **state** says who can move it now: `ready` (anyone, an agent included;
 green border), `yours` (it waits only on You; violet), `blocked` (it waits on another person, team, or resource;
-yellow), or `waiting` (on open subtasks; dashed). MCP `graph` and `get_node` return it, so an agent picks `ready` work
+yellow), `waiting` (on open subtasks; dashed), or `theirs` (someone other than You is `working_on` it; muted grey,
+dotted). `theirs` wins over the others: it is never ready for you or your agents, and closing what it needs never
+lists it in `nowReady`. MCP `graph` and `get_node` return it, so an agent picks `ready` work
 and leaves `yours` to you. When `apply_ops` closes tasks, its answer lists the tasks that just
 became ready (`nowReady`), so the next step is never silent.
 
@@ -166,9 +169,9 @@ client-IP check would not help; the published port is bound to loopback.
 
 | Verb | In | Out |
 |---|---|---|
-| `describe` | `{}` | `{ name: "ariadne", owner: You's title, areas: You's attrs.areas, repos: repos of the shared work, capabilities: ["ticket", "answer"] }` |
+| `describe` | `{}` | `{ name: "ariadne", owner: You's title, areas: You's attrs.areas, repos: repos of the shared work, capabilities: ["ticket", "answer", "intent"] }` |
 | `publish` | `{ since? }` | `{ cursor, upserts: Item[], removed: id[], full? }` |
-| `receive` | `{ ticket, from_name? }` or `{ answer, from?, from_name? }` | `{ localRef: node id }` |
+| `receive` | `{ ticket, from_name? }`, `{ answer, from?, from_name? }`, or `{ intent, from, from_name? }` | `{ localRef: node id }` |
 
 **publish: what is shared.** Opted-in roots (`attrs.steward === true`) and every task they transitively
 need. A task with `attrs.private: true` is pruned with everything below it (unless another shared path
@@ -177,7 +180,7 @@ they are a teammate's content.
 
 | Item | From |
 |---|---|
-| `work` (id = node id) | title; `body`; `state` (open: ready / yours / blocked / waiting, else done / dropped); `repos`, `branch`, `pr_url` from the task's own attrs (`repo`, `repos`, `branch`, `pr_url`), then the repo / branch / PR-link resources it or a task that needs it uses (nearest first), then a GitHub PR URL in its body; `published` from `attrs.published`, else true when a PR is known |
+| `work` (id = node id) | title; `body`; `state` (open: ready / yours / blocked / waiting, with theirs sent as blocked; else done / dropped); `repos`, `branch`, `pr_url` from the task's own attrs (`repo`, `repos`, `branch`, `pr_url`), then the repo / branch / PR-link resources it or a task that needs it uses (nearest first), then a GitHub PR URL in its body; `published` from `attrs.published`, else true when a PR is known |
 | `decision` (id = `<node id>:decision:<hash of the line>`) | each decision line; `relates_to` the task |
 | `answer` (id = `<node id>:answer`) | the Answer lines of an Ask task (each with the rest of its paragraph); `relates_to` the ticket, `audience` the asker only. steward sends targeted items by letter, never in the feed |
 
@@ -202,6 +205,14 @@ state `done` or `dropped`, so a teammate's replica sees that it ended.
   is in the answer's `relates_to` (your "Waiting on Name: ..." leaf, which your agent tags
   `{ kind: "waiting", ticket, to }` when it asks), which it then closes. Redelivery adds nothing. An answer
   nothing here waits for becomes "Answer (Name): ..." waiting on You, so it isn't lost.
+- **Intent** → task "Intent (Name): title" (body: their text, then repos, branch, PR, and paths), with
+  `attrs.steward = { kind: "intent", peer, itemId, expiresAt }` and a `working_on` edge from their person
+  node, so it is `theirs`. One task per (peer, item id): redelivery updates it in place, a renewed expiry
+  reopens it, and the author's `state: done | dropped` closes it. Without `expires_at` it lasts 7 days from
+  its `updated_at`. Intents are never published back.
+- **Expiry:** an intent that arrives already expired is stored dropped. The server drops open intents past
+  `expiresAt` at start-up, every 5 minutes, and before each `receive` (`dropExpiredIntents`), appending a
+  `**Result (date):**` line. Dropped, not deleted, so history keeps what a teammate planned.
 - **The sender** is the person whose `attrs.peer` is the steward peer id, created (titled `from_name`, or
   "Steward peer …<id>") if missing. Changes are audited with `via: steward` and that person as the actor.
 
@@ -216,3 +227,7 @@ state `done` or `dropped`, so a teammate's replica sees that it ended.
 | 2026-10-14 | A ticket's Ask task is needed by the tasks it is about, so the question shows in that subtree and the task waits until you answer. (Claude, provisional) |
 | 2026-10-14 | Answer items come only from Ask tasks (they have a ticket and an asker), not from Answer lines anywhere in a shared subtree. (Claude, provisional) |
 | 2026-10-14 | The script lives in `scripts/` (this repo has no `bin/`), and the steward routes refuse any `Origin`. (Claude, provisional) |
+| 2026-10-14 | `theirs` takes precedence over every other open state, and You working on a task changes nothing. A teammate's work is never yours to pick up, whatever it waits on. (Claude, provisional) |
+| 2026-10-14 | Expired intents are dropped by a periodic sweep (5 minutes, plus start-up and each `receive`), not hidden on read: the stored status stays the truth for readiness, search, and the graph, and the drop is audited. Flip: filter on read in `graph()` instead. (Claude, provisional) |
+| 2026-10-14 | An intent without `expires_at` lasts 7 days from its `updated_at`. (Claude, provisional) |
+| 2026-10-14 | steward has no `theirs` state, so publish sends a theirs task as `blocked`. (Claude, provisional) |

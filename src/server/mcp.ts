@@ -16,7 +16,7 @@ import { who } from './store';
 
 const INSTRUCTIONS = `Ariadne is the user's task and org tracker: their trusted external memory, so the bigger picture
 and what's next survive interruptions and session changes. It is a graph of tasks, people, teams, and resources
-(edges needs/uses/involves/reports_to/member_of/waits_on). Every change is audited and can be undone (history, undo).
+(edges needs/uses/involves/reports_to/member_of/waits_on/working_on). Every change is audited and can be undone (history, undo).
 Before working on a task, check it is clear: a specific title, and a clear point where it is done. If not, rename it
 (when the context tells you what is meant) or ask the user first. A task with an empty body is a quick capture: link
 it with needs from the nearest task it belongs to, so it is not an orphan root. When you pick it up, fill in What/Why
@@ -45,8 +45,14 @@ the user's own action, add a leaf "Review: <what>" (a branch to push, a PR to op
 the task it gates. Put the exact command or draft in its body. Do this instead of leaving it only in a Status line, so
 the user's queue is visible in the graph. Close it when the user acts. Each open task has a state (graph, get_node):
 ready means anyone, an agent included, can take it; yours means it waits only on the user (drawn violet); blocked
-means it waits on someone or something else (yellow); waiting means it waits on open subtasks. graph from You,
-direction up, kinds [waits_on] lists the user's queue. Pick up ready tasks; never work around a yours one.
+means it waits on someone or something else (yellow); waiting means it waits on open subtasks; theirs means someone
+other than the user is working on it (a working_on edge from their person or team node; drawn muted). graph from You,
+direction up, kinds [waits_on] lists the user's queue. Pick up ready tasks; never work around a yours one, and never
+pick up a theirs one: coordinate with that person instead.
+
+Someone else's work: when a teammate is doing something (they said so, or steward reports their intent), record it as a
+task with working_on from their person node to it. working_on reads "Will is working on X"; involves (task to person)
+stays "coordinate with".
 
 Titles and bodies: prefix titles with the repo or area ("PDP CI: ...") and name the result, not the activity. Body:
 What/Why, then **Done when:**. Keep one "**Status (YYYY-MM-DD):**" line for where it stands now; replace it on each
@@ -76,7 +82,9 @@ what it needs out of a shared subtree. Only opt a subtree in when the user asks.
 "Ask (Name): ..." task waiting on You: when the user answers, append "**Answer (Name, YYYY-MM-DD):** ..." to its body and
 close it; steward sends the answer lines to the asker only. When you ask a teammate through steward, add the "Waiting
 on <Name>: ..." leaf as usual with attrs.steward {kind: "waiting", ticket: "<ticket id>", to: "<their peer id>"}: their
-answer is appended there and closes it.
+answer is appended there and closes it. A teammate's declared intent arrives as an "Intent (Name): ..." task that
+their person node is working_on (theirs); steward keeps it up to date and drops it when it expires. Read intents to spot
+overlap with the user's work; don't edit them.
 
 When closing tasks makes others ready, apply_ops lists them as nowReady: offer the user the next one.`;
 
@@ -138,7 +146,7 @@ const tools: Tool[] = [
   },
   {
     name: 'graph',
-    description: 'The subgraph reachable from a node (down = what it needs/uses/involves; up = what needs it). Without "from": root tasks, people, teams, and resources. Each open task has a state: ready (anyone, an agent included, can take it), yours (waits only on the user), blocked (waits on someone or something else), or waiting (on open subtasks).',
+    description: 'The subgraph reachable from a node (down = what it needs/uses/involves, or what a person is working_on; up = what needs it). Without "from": root tasks, people, teams, and resources. Each open task has a state: ready (anyone, an agent included, can take it), yours (waits only on the user), blocked (waits on someone or something else), waiting (on open subtasks), or theirs (someone other than the user is working on it; never pick it up).',
     input: z.object({
       from: z.uuid().optional(),
       direction: z.enum(['down', 'up', 'both']).optional(),
@@ -170,7 +178,7 @@ const tools: Tool[] = [
   {
     name: 'apply_ops',
     description:
-      'Create, update, or delete nodes and edges in one transaction. When it closes tasks, nowReady lists the tasks that just became ready. Ops: create_node (kind, title, body?, privateNotes?, privateReason?, status?, attrs?, ref?), update_node (id, ...; attrs merge, null removes; task attrs take guidance plus any keys of your own, e.g. structured run state; append adds to the body, and section limits body or append to one "## Heading" section, instead of re-sending the whole body; privateNotes replaces and privateAppend adds to the private notes), privateNotes and privateAppend are refused without privateReason (why it must stay private; prefer the body), delete_node, create_edge (src, kind, dst, note?), update_edge, delete_edge (id, or src+kind+dst). Use "ref" on create_node and "$ref" in later ops to link new nodes. Edge kinds: needs (task→task; a root task is one nothing needs), uses (task→resource), involves (task→person/team), reports_to (person/team→person/team), member_of (person/team→team), waits_on (task→person/team/resource it is blocked on outside the user\'s control; the task is blocked, not ready, until closed).',
+      'Create, update, or delete nodes and edges in one transaction. When it closes tasks, nowReady lists the tasks that just became ready. Ops: create_node (kind, title, body?, privateNotes?, privateReason?, status?, attrs?, ref?), update_node (id, ...; attrs merge, null removes; task attrs take guidance plus any keys of your own, e.g. structured run state; append adds to the body, and section limits body or append to one "## Heading" section, instead of re-sending the whole body; privateNotes replaces and privateAppend adds to the private notes), privateNotes and privateAppend are refused without privateReason (why it must stay private; prefer the body), delete_node, create_edge (src, kind, dst, note?), update_edge, delete_edge (id, or src+kind+dst). Use "ref" on create_node and "$ref" in later ops to link new nodes. Edge kinds: needs (task→task; a root task is one nothing needs), uses (task→resource), involves (task→person/team), reports_to (person/team→person/team), member_of (person/team→team), waits_on (task→person/team/resource it is blocked on outside the user\'s control; the task is blocked, not ready, until closed), working_on (person/team→task they are doing; the task is theirs, never ready for the user).',
     input: z.object({ ops: z.array(Op).min(1) }),
     run: async (core, a: { ops: Op[] }) => {
       const out = await core.apply(who(null, 'mcp'), a.ops);

@@ -4,7 +4,7 @@
 // - describe: who this back end speaks for, and which receive kinds it handles.
 // - publish: the opted-in subtrees as steward items. Built from Node only (never a nodes row, get_node, or an audit
 //   snapshot), so private notes never leave this machine.
-// - receive: a teammate's ticket or answer becomes nodes here.
+// - receive: a teammate's ticket, answer, or intent becomes nodes here. Intents expire (dropExpiredIntents).
 //
 // Wire shapes follow steward's src/item.rs: snake_case keys, times in Unix seconds, audience = peer ids (empty: pod).
 import { createHash } from 'node:crypto';
@@ -56,7 +56,10 @@ export interface Describe {
 }
 
 /** The receive kinds this back end handles. steward keeps any other kind in its own inbox. */
-export const CAPABILITIES = ['ticket', 'answer'];
+export const CAPABILITIES = ['ticket', 'answer', 'intent'];
+
+/** An intent that names no expiry lasts this long after it was last updated. */
+export const DEFAULT_INTENT_DAYS = 7;
 
 // steward refuses a body over 16 KiB (src/item.rs MAX_BODY).
 const MAX_BODY = 16 * 1024;
@@ -66,12 +69,16 @@ const MAX_TITLE = 300;
 
 /** Steward bookkeeping on a task: attrs.steward when it is an object rather than the opt-in flag. */
 export interface StewardAttr {
-  /** ask: a teammate's ticket to you. waiting: your ticket to a teammate. answer: an answer nothing here was waiting for. */
+  /** ask: a teammate's ticket to you. waiting: your ticket to a teammate. answer: an answer nothing here was waiting for. intent: a teammate's declared plan. */
   kind?: 'ask' | 'waiting' | 'answer' | 'intent';
   ticket?: string;
   from?: string;
   to?: string;
   answer?: string;
+  /** intent: the author's peer id, their item id, and when it expires (ISO time). */
+  peer?: string;
+  itemId?: string;
+  expiresAt?: string;
 }
 
 export function stewardAttr(n: Node): StewardAttr | null {
@@ -126,10 +133,11 @@ function clip(text: string, max: number): string {
 
 const shortHash = (t: string) => createHash('sha256').update(t).digest('hex').slice(0, 12);
 
-/** An open task's state on the wire. */
+/** An open task's state on the wire. steward has no "theirs": a task someone else is working on is blocked for us. */
 function wireState(n: Node, edges: readonly Edge[], byId: ReadonlyMap<string, Node>): ItemState {
   if (n.status !== 'open') return n.status === 'dropped' ? 'dropped' : 'done';
-  return taskState(readiness(n, edges, byId));
+  const st = taskState(readiness(n, edges, byId));
+  return st === 'theirs' ? 'blocked' : st;
 }
 
 interface Where {
@@ -303,16 +311,27 @@ const InItem = z.object({
   relates_to: z.array(z.string()).optional(),
   updated_at: z.number().optional(),
 });
+const InIntent = InItem.extend({
+  repos: z.array(z.string()).optional(),
+  branch: z.string().nullish(),
+  pr_url: z.string().nullish(),
+  paths: z.array(z.string()).optional(),
+  state: z.string().nullish(),
+  expires_at: z.number().nullish(),
+});
 // `from` is the author's steward peer id; `from_name` (optional) names a person this creates.
 const Inbound = z.union([
   z.object({ ticket: Ticket, from_name: z.string().optional() }),
   z.object({ answer: InItem, from: z.string().min(1).optional(), from_name: z.string().optional() }),
+  z.object({ intent: InIntent, from: z.string().min(1), from_name: z.string().optional() }),
 ]);
 export type Inbound = z.infer<typeof Inbound>;
 
 export async function receive(core: Core, msg: unknown): Promise<{ localRef: string }> {
   const m = Inbound.parse(msg);
+  await dropExpiredIntents(core);
   if ('ticket' in m) return { localRef: await core.run(who(null, 'steward'), (c) => receiveTicket(c, m.ticket, m.from_name)) };
+  if ('intent' in m) return { localRef: await core.run(who(null, 'steward'), (c) => receiveIntent(c, m.intent, m.from, m.from_name)) };
   return { localRef: await core.run(who(null, 'steward'), (c) => receiveAnswer(c, m.answer, m.from, m.from_name)) };
 }
 
@@ -400,4 +419,63 @@ async function receiveAnswer(c: Ctx, a: z.infer<typeof InItem>, from?: string, f
     ...(person ? [{ op: 'create_edge', src: '$ans', kind: 'involves', dst: person.id } as Op] : []),
   ];
   return (await applyOps(c, ops))[0]!.id;
+}
+
+/**
+ * A teammate's intent → "Intent (Name): …", with a working_on edge from their person node, so it is theirs: never
+ * ready for you. One task per (peer, item id), updated on every redelivery; dropped once expired, or closed when the
+ * author closes it.
+ */
+async function receiveIntent(c: Ctx, it: z.infer<typeof InIntent>, from: string, fromName?: string): Promise<string> {
+  const person = await personForPeer(c, from, fromName);
+  const base = it.updated_at ?? Math.floor(Date.now() / 1000);
+  const expiresAt = new Date((it.expires_at ?? base + DEFAULT_INTENT_DAYS * 86_400) * 1000).toISOString();
+  const expired = Date.parse(expiresAt) <= Date.now();
+  const status = expired ? 'dropped' : it.state === 'done' || it.state === 'dropped' ? it.state : 'open';
+  const facts = [
+    ...(it.repos?.length ? [`**Repos:** ${it.repos.join(', ')}`] : []),
+    ...(str(it.branch) ? [`**Branch:** ${it.branch}`] : []),
+    ...(str(it.pr_url) ? [`**PR:** ${it.pr_url}`] : []),
+    ...(it.paths?.length ? [`**Paths:** ${it.paths.join(', ')}`] : []),
+  ];
+  const body = [
+    ...(str(it.body) ? [it.body!.trim(), ''] : []),
+    ...facts,
+    ...(facts.length ? [''] : []),
+    `**From steward:** ${person.title}'s intent \`${it.id}\`, until ${expiresAt.slice(0, 16).replace('T', ' ')} UTC. Steward keeps this task up to date and drops it when it expires. It is theirs: not yours to pick up.`,
+  ].join('\n');
+  const title = clip(`Intent (${person.title}): ${oneLine(it.title)}`, 160);
+  const steward = { kind: 'intent', peer: from, itemId: it.id, expiresAt };
+  const existing = await findTask(c, `attrs->'steward'->>'kind' = 'intent' AND attrs->'steward'->>'peer' = $1 AND attrs->'steward'->>'itemId' = $2`, [from, it.id]);
+  if (!existing) {
+    const ops: Op[] = [
+      { op: 'create_node', ref: 'intent', kind: 'task', title, body, status, attrs: { steward } },
+      { op: 'create_edge', src: person.id, kind: 'working_on', dst: '$intent', note: 'steward intent' },
+    ];
+    return (await applyOps(c, ops))[0]!.id;
+  }
+  const changed = existing.title !== title || existing.body !== body || existing.status !== status || JSON.stringify(existing.attrs.steward) !== JSON.stringify(steward);
+  const ops: Op[] = [
+    ...(changed ? [{ op: 'update_node', id: existing.id, title, body, status, attrs: { steward } } as Op] : []),
+    { op: 'create_edge', src: person.id, kind: 'working_on', dst: existing.id, note: 'steward intent' },
+  ];
+  await applyOps(c, ops);
+  return existing.id;
+}
+
+/**
+ * Drops open intents whose expiresAt has passed. The server runs it every few minutes (main.ts) and before each
+ * receive, so an expired intent never lingers long. Returns the ids it dropped.
+ */
+export async function dropExpiredIntents(core: Core, now = new Date()): Promise<string[]> {
+  const r = await core.db.query(
+    `SELECT id FROM nodes WHERE kind = 'task' AND status = 'open' AND attrs->'steward'->>'kind' = 'intent'
+       AND CASE WHEN attrs->'steward'->>'expiresAt' ~ '^\\d{4}-\\d\\d-\\d\\dT' THEN (attrs->'steward'->>'expiresAt')::timestamptz <= $1 ELSE false END`,
+    [now],
+  );
+  const ids = r.rows.map((x) => x.id as string);
+  if (!ids.length) return [];
+  const line = `**Result (${now.toISOString().slice(0, 10)}):** the intent expired; dropped by steward.`;
+  await core.run(who(null, 'steward'), (c) => applyOps(c, ids.map((id): Op => ({ op: 'update_node', id, status: 'dropped', append: line }))));
+  return ids;
 }

@@ -1,6 +1,6 @@
 // The application core: every change goes through here, in one transaction, then the hub is told.
 import { readiness, taskState } from '../shared/graph';
-import type { Edge, Node, NodeWithPrivate } from '../shared/model';
+import { type Edge, type Node, type NodeWithPrivate, USER_ID } from '../shared/model';
 import { type Db, withTx } from './db';
 import type { Hub } from './hub';
 import { applyOps, type OpResult } from './ops';
@@ -50,7 +50,7 @@ export class Core {
     return { nodes, edges };
   }
 
-  /** Open tasks that need one of `closed` and now wait on nothing (no open needs, no waits_on): what closing those tasks just made ready. */
+  /** Open tasks that need one of `closed` and now wait on nothing (no open needs, no waits_on, nobody else working on them): what closing those tasks just made ready. */
   async newlyReady(q: s.Q, closed: string[]): Promise<{ id: string; title: string }[]> {
     if (!closed.length) return [];
     const r = await q.query(
@@ -58,8 +58,9 @@ export class Core {
        WHERE e.kind = 'needs' AND e.dst::text = ANY($1) AND d.status <> 'open' AND t.status = 'open'
          AND NOT EXISTS (SELECT 1 FROM edges w JOIN nodes n ON n.id = w.dst WHERE w.kind = 'needs' AND w.src = t.id AND n.status = 'open')
          AND NOT EXISTS (SELECT 1 FROM edges x WHERE x.kind = 'waits_on' AND x.src = t.id)
+         AND NOT EXISTS (SELECT 1 FROM edges y WHERE y.kind = 'working_on' AND y.dst = t.id AND y.src <> $2)
        ORDER BY t.title`,
-      [closed],
+      [closed, USER_ID],
     );
     return r.rows.map((x) => ({ id: x.id as string, title: x.title as string }));
   }

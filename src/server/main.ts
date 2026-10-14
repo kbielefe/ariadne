@@ -7,6 +7,7 @@ import { registerApi } from './api';
 import { Core } from './core';
 import { createPool, migrate } from './db';
 import { Hub } from './hub';
+import { dropExpiredIntents } from './steward';
 
 const env = process.env;
 
@@ -45,7 +46,13 @@ async function main() {
   }
 
   await app.listen({ host, port });
+  // Teammates' steward intents expire: drop them now and every few minutes (docs/DESIGN.md §6).
+  const sweep = () => void dropExpiredIntents(core).catch((err) => app.log.error(err, 'dropping expired intents'));
+  sweep();
+  const sweeper = setInterval(sweep, 5 * 60_000);
+  sweeper.unref();
   const shutdown = async () => {
+    clearInterval(sweeper);
     await app.close();
     await db.end();
     process.exit(0);

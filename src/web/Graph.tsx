@@ -20,13 +20,17 @@ const NODE_KINDS: NodeKind[] = ['task', 'person', 'team', 'resource'];
 interface Filters {
   kinds: NodeKind[];
   edges: EdgeKind[];
+  /** The edge kinds that existed when these filters were saved: kinds added since start shown. */
+  knownEdges: EdgeKind[];
   showClosed: boolean;
   showImpact: boolean;
   direction: Direction;
   depth: number;
 }
 
-const DEFAULT_FILTERS: Filters = { kinds: NODE_KINDS, edges: [...EdgeKinds.options], showClosed: false, showImpact: false, direction: 'down', depth: 0 };
+// Filters saved before knownEdges existed predate working_on.
+const LEGACY_EDGES = EdgeKinds.options.filter((k) => k !== 'working_on');
+const DEFAULT_FILTERS: Filters = { kinds: NODE_KINDS, edges: [...EdgeKinds.options], knownEdges: [...EdgeKinds.options], showClosed: false, showImpact: false, direction: 'down', depth: 0 };
 
 function loadSort(): Sort {
   const s = remember.get('graphSort');
@@ -44,8 +48,11 @@ function loadBends(): boolean {
 
 function loadFilters(): Filters {
   try {
-    const f: Filters = { ...DEFAULT_FILTERS, ...JSON.parse(remember.get('graphFilters') ?? '{}') };
-    return { ...f, kinds: f.kinds.filter((k) => NODE_KINDS.includes(k)) };
+    const saved = JSON.parse(remember.get('graphFilters') ?? '{}') as Partial<Filters>;
+    const f: Filters = { ...DEFAULT_FILTERS, ...saved };
+    const known = saved.edges ? (saved.knownEdges ?? LEGACY_EDGES) : EdgeKinds.options;
+    const edges = [...f.edges.filter((k) => EdgeKinds.options.includes(k)), ...EdgeKinds.options.filter((k) => !known.includes(k) && !f.edges.includes(k))];
+    return { ...f, kinds: f.kinds.filter((k) => NODE_KINDS.includes(k)), edges, knownEdges: [...EdgeKinds.options] };
   } catch {
     return DEFAULT_FILTERS;
   }
@@ -328,6 +335,8 @@ function styles(): cytoscape.StylesheetJson {
   const blockedSoft = css('--blocked-soft', '#fef9c3');
   const yours = css('--yours', '#7c3aed');
   const yoursSoft = css('--yours-soft', '#ede9fe');
+  const theirs = css('--theirs', '#64748b');
+  const theirsSoft = css('--theirs-soft', '#eef1f5');
   return [
     {
       selector: 'node',
@@ -353,6 +362,8 @@ function styles(): cytoscape.StylesheetJson {
     { selector: 'node.task.blocked', style: { 'border-color': blocked, 'border-width': 3, 'background-color': blockedSoft } },
     // Waits only on you (a review, a decision): violet, so your queue stands out from what an agent can take (green).
     { selector: 'node.task.yours', style: { 'border-color': yours, 'border-width': 3, 'background-color': yoursSoft } },
+    // Someone else is working on it (a teammate's intent): muted and dotted, so it reads as context, not work for you.
+    { selector: 'node.task.theirs', style: { 'border-color': theirs, 'border-style': 'dotted', 'border-width': 2.5, 'background-color': theirsSoft, color: theirs } },
     { selector: 'node.task.root', style: { 'font-weight': 'bold', 'border-width': 3 } },
     { selector: 'node.task.done, node.task.dropped', style: { color: muted, opacity: 0.6 } },
     { selector: 'node.task.dropped', style: { 'text-decoration': 'line-through' } as never },
@@ -382,6 +393,7 @@ function styles(): cytoscape.StylesheetJson {
     { selector: 'edge.involves', style: { 'line-style': 'dotted' } },
     { selector: 'edge.waits_on', style: { width: 2.5, 'line-color': blocked, 'target-arrow-color': blocked, color: blocked } },
     { selector: 'edge.waits_on.to-you', style: { 'line-color': yours, 'target-arrow-color': yours, color: yours } },
+    { selector: 'edge.working_on', style: { width: 2, 'line-style': 'dashed', 'line-color': theirs, 'target-arrow-color': theirs, color: theirs } },
     { selector: 'edge:selected', style: { 'line-color': accent, 'target-arrow-color': accent, width: 3 } },
   ];
 }

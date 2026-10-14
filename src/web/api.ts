@@ -11,7 +11,7 @@ export interface NodeDetail {
   node: NodeWithPrivate;
   edges: Edge[];
   neighbors: Node[];
-  readiness?: { ready: boolean; waitingOn: string[]; external: string[]; state: TaskState };
+  readiness?: { ready: boolean; waitingOn: string[]; external: string[]; theirs: string[]; state: TaskState };
 }
 
 export class ApiError extends Error {}

@@ -14,6 +14,8 @@
   --blocked-soft: #fef9c3;
   --yours: #7c3aed;
   --yours-soft: #ede9fe;
+  --theirs: #64748b;
+  --theirs-soft: #eef1f5;
   --danger: #c0352b;
   --person: #eef2ff;
   --team: #fdf3d8;
@@ -39,6 +41,8 @@
     --blocked-soft: #3a3412;
     --yours: #c4b5fd;
     --yours-soft: #2e1f4d;
+    --theirs: #94a3b8;
+    --theirs-soft: #232a35;
     --danger: #ff7a70;
     --person: #252b45;
       --team: #3a3220;
@@ -274,6 +278,9 @@ code,
 }
 .tag.yours {
   color: var(--yours);
+}
+.tag.theirs {
+  color: var(--theirs);
 }
 .row {
   display: flex;

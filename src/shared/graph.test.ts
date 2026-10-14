@@ -36,8 +36,8 @@ describe('readiness', () => {
   it('a task that waits_on someone is blocked, not ready, even with nothing open it needs', () => {
     const byId = tasks({ w: 'open', done: 'done' });
     const edges = [needs('w', 'done'), { ...needs('w', 'ann'), kind: 'waits_on' as const }];
-    expect(readiness(byId.get('w')!, edges, byId)).toEqual({ ready: false, waitingOn: [], external: ['ann'] });
-    expect(readiness(byId.get('w')!, [needs('w', 'done')], byId)).toEqual({ ready: true, waitingOn: [], external: [] });
+    expect(readiness(byId.get('w')!, edges, byId)).toEqual({ ready: false, waitingOn: [], external: ['ann'], theirs: [] });
+    expect(readiness(byId.get('w')!, [needs('w', 'done')], byId)).toEqual({ ready: true, waitingOn: [], external: [], theirs: [] });
   });
 });
 
@@ -64,5 +64,13 @@ describe('taskState', () => {
   it('waiting: open subtasks come before your turn', () => {
     expect(state([needs('t', 'sub')])).toBe('waiting');
     expect(state([needs('t', 'sub'), waitsOn('t', USER_ID)])).toBe('waiting');
+  });
+
+  it('theirs: someone else is working on it, so it is never ready for you, whatever else it waits on', () => {
+    const workingOn = (src: string, dst: string): Edge => ({ ...needs(src, dst), kind: 'working_on' });
+    expect(state([workingOn('will', 't')])).toBe('theirs');
+    expect(state([workingOn('will', 't'), needs('t', 'sub'), waitsOn('t', 'ann')])).toBe('theirs');
+    // You working on it changes nothing.
+    expect(state([workingOn(USER_ID, 't')])).toBe('ready');
   });
 });
