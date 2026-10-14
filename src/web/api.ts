@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react';
 import type { TaskState } from '../shared/graph';
-import type { Edge, Node, Op } from '../shared/model';
+import type { Edge, Node, NodeWithPrivate, Op } from '../shared/model';
 
 export interface GraphData {
   nodes: Node[];
   edges: Edge[];
 }
 export interface NodeDetail {
-  node: Node;
+  /** Only the node view carries the private notes. */
+  node: NodeWithPrivate;
   edges: Edge[];
   neighbors: Node[];
   pending?: boolean;

@@ -1,4 +1,4 @@
-import { Check, Copy, Crosshair, Pencil, Plus, X } from 'lucide-react';
+import { Check, Copy, Crosshair, Lock, Pencil, Plus, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { ACTOR_KINDS, EDGE_RULES, type Edge, type EdgeKind, type Node, type NodeKind, type Op, ResourceType, USER_ID } from '../shared/model';
 import { api, type NodeDetail } from './api';
@@ -127,6 +127,8 @@ export function NodePanel({ id, onSelect, onClose }: { id: string; onSelect(id: 
         <InlineText value={n.body} multiline onSave={(body) => save({ body })} label="Description" placeholder="Markdown. What it is, why it matters, what done looks like." />
       </Section>
 
+      <PrivateNotes text={n.privateNotes} />
+
       <Attrs node={n} save={save} />
       <Edges detail={d} run={run} onSelect={onSelect} />
       <p className="muted small">
@@ -163,9 +165,30 @@ function CopyId({ id }: { id: string }) {
   );
 }
 
-function Section({ title, children, open = true }: { title: string; children: React.ReactNode; open?: boolean }) {
+/**
+ * Private notes never leave this machine. Read-only here: every write needs a reason for the audit log, so they are
+ * written through Claude Code (apply_ops with privateReason).
+ */
+function PrivateNotes({ text }: { text: string }) {
   return (
-    <details className="section" open={open}>
+    <Section
+      title={
+        <>
+          <Lock size={13} aria-hidden /> Private notes
+        </>
+      }
+      open={!!text}
+      className="private"
+    >
+      {text ? <Md text={text} /> : <p className="muted small">None.</p>}
+      <p className="muted small">Kept on this machine only, never shared. Written through Claude Code, with a reason in the history.</p>
+    </Section>
+  );
+}
+
+function Section({ title, children, open = true, className }: { title: React.ReactNode; children: React.ReactNode; open?: boolean; className?: string }) {
+  return (
+    <details className={`section ${className ?? ''}`} open={open}>
       <summary>{title}</summary>
       {children}
     </details>

@@ -22,9 +22,9 @@ lines, branch scopes, and undo.
 
 | Table | Holds |
 |---|---|
-| `nodes` | `kind` = task / person / team / resource, plus `title`, `body` (markdown), `status` (tasks only: open / done / dropped), and `attrs` (checked per kind) |
+| `nodes` | `kind` = task / person / team / resource, plus `title`, `body` (markdown), `private_notes` (markdown, see below), `status` (tasks only: open / done / dropped), and `attrs` (checked per kind) |
 | `edges` | `src -kind-> dst` with an optional `note` |
-| `audit` | Every change, with who made it (`actor`: you for the UI, null for MCP) and how (`via`: `ui` / `mcp`). Grouped into changesets for Undo |
+| `audit` | Every change, with who made it (`actor`: you for the UI, null for MCP), how (`via`: `ui` / `mcp`), and, when the change must say why, a `reason`. Grouped into changesets for Undo |
 
 **Attrs per kind**
 
@@ -76,6 +76,26 @@ the lines. The MCP instructions tell Claude to record them this way.
 **Branches are shared scopes:** a resource with `attrs.type` `branch` (plus `repo` and `branch`)
 groups work that ships in one PR. Every task that uses it, and everything those tasks need, is in
 its scope. `get_node` on a task lists each branch it ships on with every task in that scope.
+
+**Private notes** (migration `008_private_notes.sql`): every node has a public `body` and separate
+`private_notes`. This is the one deliberate exception to the simple schema, so the two can be treated
+differently (e.g. separate vectors later). The body is preferred, because it may be shared with the pod
+through steward. Private notes are for what must never leave this machine: opinions about people,
+personnel or HR matters, unannounced plans, other teams' confidential details, pointers to where
+credentials live, and anything that would embarrass someone if shared.
+
+- **Every write needs a reason.** `create_node` / `update_node` take `privateNotes` (replace) or
+  `privateAppend` only together with `privateReason`, and `privateReason` only with one of them (a zod
+  refine on the op). The reason goes in `audit.reason`, so `history` shows why.
+- **Default-deny reads.** The `Node` type (graph, search results, neighbors, inherited context) never
+  carries them. Only the node view (`get_node`, `/api/nodes/:id`) adds `node.privateNotes`, for the
+  local user. Owner-side `search` matches them but doesn't return them.
+- **The UI** shows them in a separate "Private notes" section with a lock icon, read-only: a write needs
+  a reason, so it goes through Claude Code.
+- **Export rule (steward plug-in, `/api/steward/publish`, still to build):** build what leaves the
+  machine from `Node` (`store.mapNode`) only, never from a `nodes` row, `get_node`, or an audit
+  snapshot. Audit `before`/`after` are whole rows, private notes included, and `reason` may quote
+  them; nothing exported may read either. A test must cover this when the export lands.
 
 **You** (`…0001`) is a person node created by the first migration. It can be edited but not deleted.
 

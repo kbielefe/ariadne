@@ -566,6 +566,15 @@ code,
   color: var(--muted);
   margin-bottom: 6px;
 }
+/* Private notes: set apart so it never reads as part of the shareable body. */
+.section.private {
+  background: var(--surface-2);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+}
+.section.private > summary svg {
+  vertical-align: -2px;
+}
 .section .field {
   display: grid;
   gap: 3px;
