@@ -94,8 +94,9 @@ credentials live, and anything that would embarrass someone if shared.
 - **Default-deny reads.** The `Node` type (graph, search results, neighbors, inherited context) never
   carries them. Only the node view (`get_node`, `/api/nodes/:id`) adds `node.privateNotes`, for the
   local user. Owner-side `search` matches them but doesn't return them.
-- **The UI** shows them in a separate "Private notes" section with a lock icon, read-only: a write needs
-  a reason, so it goes through Claude Code.
+- **The UI** shows them in a separate "Private notes" section with a lock icon. Editing there asks for a
+  reason, the same rule as MCP: `/api/ops` uses the same `Op` schema, so a write without one is refused,
+  and the reason lands in the audit log (`via: ui`).
 - **Export rule (steward plug-in, `/api/steward/publish`, §6):** build what leaves the
   machine from `Node` (`store.mapNode`) only, never from a `nodes` row, `get_node`, or an audit
   snapshot. Audit `before`/`after` are whole rows, private notes included, and `reason` may quote
@@ -220,14 +221,15 @@ state `done` or `dropped`, so a teammate's replica sees that it ended.
 
 | Date | Decision |
 |---|---|
-| 2026-10-14 | Publish is stateless: the full set with `full: true` whenever the audit log moved, rather than a table of what was published. steward already diffs against its own feed, and a stateless back end can't drift from it. Flip: add a `steward_published (item_id, hash, seq)` table and send true deltas. (Claude, provisional) |
-| 2026-10-14 | The cursor is the newest audit row id plus the row count, not a changeset id: changeset ids are UUIDs with no order. (Claude, provisional) |
-| 2026-10-14 | Closed work stays published with state done / dropped; only un-shared or deleted tasks are removed. Teammates see that work ended. (Claude, provisional) |
-| 2026-10-14 | `attrs.steward` is the opt-in only when it is exactly `true`; an object is bookkeeping on tasks steward made or tracks (`kind`: ask, waiting, answer, intent). One key, no clash with design 11's intent attrs. (Claude, provisional) |
-| 2026-10-14 | A ticket's Ask task is needed by the tasks it is about, so the question shows in that subtree and the task waits until you answer. (Claude, provisional) |
-| 2026-10-14 | Answer items come only from Ask tasks (they have a ticket and an asker), not from Answer lines anywhere in a shared subtree. (Claude, provisional) |
-| 2026-10-14 | The script lives in `scripts/` (this repo has no `bin/`), and the steward routes refuse any `Origin`. (Claude, provisional) |
-| 2026-10-14 | `theirs` takes precedence over every other open state, and You working on a task changes nothing. A teammate's work is never yours to pick up, whatever it waits on. (Claude, provisional) |
-| 2026-10-14 | Expired intents are dropped by a periodic sweep (5 minutes, plus start-up and each `receive`), not hidden on read: the stored status stays the truth for readiness, search, and the graph, and the drop is audited. Flip: filter on read in `graph()` instead. (Claude, provisional) |
-| 2026-10-14 | An intent without `expires_at` lasts 7 days from its `updated_at`. (Claude, provisional) |
-| 2026-10-14 | steward has no `theirs` state, so publish sends a theirs task as `blocked`. (Claude, provisional) |
+| 2026-10-14 | Private notes are editable in the UI with a required reason field, not only through Claude Code; reads stay default-deny (node view only). (Karl, 2026-10-14) |
+| 2026-10-14 | Publish is stateless: the full set with `full: true` whenever the audit log moved, rather than a table of what was published. steward already diffs against its own feed, and a stateless back end can't drift from it. Flip: add a `steward_published (item_id, hash, seq)` table and send true deltas. (Karl, 2026-10-14) |
+| 2026-10-14 | The cursor is the newest audit row id plus the row count, not a changeset id: changeset ids are UUIDs with no order. (Karl, 2026-10-14) |
+| 2026-10-14 | Closed work stays published with state done / dropped; only un-shared or deleted tasks are removed. Teammates see that work ended. (Karl, 2026-10-14) |
+| 2026-10-14 | `attrs.steward` is the opt-in only when it is exactly `true`; an object is bookkeeping on tasks steward made or tracks (`kind`: ask, waiting, answer, intent). One key, no clash with design 11's intent attrs. (Karl, 2026-10-14) |
+| 2026-10-14 | A ticket's Ask task is needed by the tasks it is about, so the question shows in that subtree and the task waits until you answer. (Karl, 2026-10-14) |
+| 2026-10-14 | Answer items come only from Ask tasks (they have a ticket and an asker), not from Answer lines anywhere in a shared subtree. (Karl, 2026-10-14) |
+| 2026-10-14 | The script lives in `scripts/` (this repo has no `bin/`), and the steward routes refuse any `Origin`. (Karl, 2026-10-14) |
+| 2026-10-14 | `theirs` takes precedence over every other open state, and You working on a task changes nothing. A teammate's work is never yours to pick up, whatever it waits on. (Karl, 2026-10-14) |
+| 2026-10-14 | Expired intents are dropped by a periodic sweep (5 minutes, plus start-up and each `receive`), not hidden on read: the stored status stays the truth for readiness, search, and the graph, and the drop is audited. Flip: filter on read in `graph()` instead. (Karl, 2026-10-14) |
+| 2026-10-14 | An intent without `expires_at` lasts 7 days from its `updated_at`. (Karl, 2026-10-14) |
+| 2026-10-14 | steward has no `theirs` state, so publish sends a theirs task as `blocked`. (Karl, 2026-10-14) |
