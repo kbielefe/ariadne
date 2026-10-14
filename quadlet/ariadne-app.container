@@ -1,17 +1,16 @@
 [Unit]
 Description=Ariadne server
-Requires=ariadne-app-build.service ariadne-postgres.service ariadne-frontend-network.service ariadne-backend-network.service ariadne-peer-volume.service
-After=ariadne-app-build.service ariadne-postgres.service ariadne-frontend-network.service ariadne-backend-network.service ariadne-peer-volume.service
+Requires=ariadne-app-build.service ariadne-postgres.service ariadne-frontend-network.service ariadne-backend-network.service
+After=ariadne-app-build.service ariadne-postgres.service ariadne-frontend-network.service ariadne-backend-network.service
 
 [Container]
 ContainerName=ariadne-app
-# Compose and the tunnel origin use this DNS name.
+# Compose uses this DNS name.
 NetworkAlias=app
 Image=ariadne-app.build
 Network=ariadne-frontend.network
 Network=ariadne-backend.network
 PublishPort=127.0.0.1:3100:3100
-Volume=ariadne-peer.volume:/app/secrets:U
 UserNS=keep-id:uid=1000,gid=1000
 ReadOnly=true
 Tmpfs=/tmp

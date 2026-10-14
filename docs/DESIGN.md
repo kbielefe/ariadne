@@ -14,6 +14,7 @@ what's next, so they survive interruptions and session changes.
 | v1 (`v1` branch) | Outcomes, tasks, plans, reviews... (~25 tables), pages and forms | Felt like data entry or a bug tracker |
 | v2, 2026-10-01 | Graph + events (assign / report), an Analyst agent, cards, claims, RabbitMQ runners, System One dispatch | An interactive, AI-decision-oriented tool |
 | 2026-10-02 | **Graph + audit only.** Removed the Analyst, events, cards, claims, timers, RabbitMQ, runners, agents, and System One | In practice the user just directed Claude Code in an interactive session, using Ariadne as a task and org tracker. The graph view was what earned its place |
+| 2026-10-14 | Private notes; **federation removed** | Sharing moves to steward (its own repo), which needs a field that never leaves the machine. Two instances sharing a subgraph was more machinery than it earned |
 
 Kept from v2: one task edge kind (`needs`), root tasks instead of Outcomes, inherited context, decision
 lines, branch scopes, and undo.
@@ -31,7 +32,7 @@ lines, branch scopes, and undo.
 | Kind | Attrs |
 |---|---|
 | task | `guidance`: instructions for this task and everything it needs (inherited). Any other keys are allowed too (e.g. an agent's structured run state) and are not checked |
-| person, team | `areas`: what they own or can help with |
+| person, team | `areas`: what they own or can help with; `peer`: the steward peer id of the member this person is |
 | resource | `type` (repo / branch / build / doc / link / other), `url`; for a branch, `repo` and `branch` |
 
 **Edge kinds**
@@ -133,32 +134,17 @@ Claude Code ──MCP (/mcp)──►
   oldest first, newest first, recently updated, or title. Changing it lays the graph out again; it is remembered.
   dagre may still move a node with children to avoid edge crossings; leaves always follow the order.
 
-## 6. Federation
+## 6. Sharing with the pod (steward)
 
-Two instances can share one subgraph. The rest of each graph stays local. A share has two members.
-The instance that created a node is its home: it is the only one that commits an edit to that node.
-The other member's edit is a proposal. A stale `version` fails the same check as a local edit, and
-the sender stores the home's current copy. There is one share log, written by the home of the root,
-not a merge of the two audit logs.
+Ariadne no longer talks to other instances. The libp2p federation (shares, home peers, proposals,
+relay spool, the `/p2p` WebSocket and its tunnel) was removed in 2026-10 (migration
+`009_drop_federation.sql` drops its tables and `nodes.home`). Sharing with the pod moves to
+**steward**, a separate project in its own repo; Ariadne will be one steward back end through a small
+plug-in in this repo (`/api/steward/*`, not built yet). That plug-in must follow the export rule under
+**Private notes** (§2): build from `Node`, never from rows, `get_node`, or audit snapshots.
 
-The shared view walks outgoing edges from the root (`needs`, `uses`, `involves`, `waits_on`,
-`member_of`, `reports_to`). It does not walk inward, so a task that merely needs the root stays
-private. `You` (the local user id) is never sent. An edge that touched `You` is published as an edge
-to this instance's own person node. Deleting the edge that brought a node in drops that node from
-the other member's copy.
-
-Transport is WebSockets only, so a cloudflared tunnel can carry it. The public address is
-`wss://<host>/p2p`. Fastify proxies that upgrade to the libp2p listener. TLS stops at Cloudflare;
-the origin speaks plain WebSocket, and the libp2p session inside it stays encrypted. A peer on the
-LAN dials `ws://<lan-ip>:<port>/p2p` instead. Set `ARIADNE_PUBLIC_URL` to the https origin and
-`ARIADNE_LAN_URL` when this instance has no public address. A ping every 25 seconds keeps an idle
-tunnel from closing the socket.
-
-A third instance that can only dial out reaches its peer through the always-on instance, using
-libp2p Circuit Relay v2. The relay cannot read that session. When the two are not online together,
-the sender leaves a sealed frame in the relay's spool. The relay stores the blob and the peer ids,
-and not the share id, titles, or bodies.
-
-`ARIADNE_FEDERATION=off` disables this. `ARIADNE_RELAY` is `off`, `server` (the instance others
-reserve on), or `client`. `ARIADNE_FEDERATION_LISTEN=off` means this instance dials out and does
-not open a port. The HTTP UI and MCP stay on localhost. Federation authenticates with the peer key.
+- **Kept:** person `attrs.peer`. It now names the **steward peer id** that maps a person node to a steward
+  member (it used to name an Ariadne instance).
+- **Left as they were:** nodes replicated here from another instance are now ordinary local nodes;
+  audit rows with `via: sync` came from that replication. Undo still works on snapshots that name the
+  dropped `home` column (it restores only columns the table still has).
