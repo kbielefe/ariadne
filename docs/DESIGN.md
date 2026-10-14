@@ -31,7 +31,7 @@ lines, branch scopes, and undo.
 
 | Kind | Attrs |
 |---|---|
-| task | `guidance`: instructions for this task and everything it needs (inherited). Any other keys are allowed too (e.g. an agent's structured run state) and are not checked |
+| task | `guidance`: instructions for this task and everything it needs (inherited). `steward`: `true` shares the task and what it needs with the pod; an object is steward bookkeeping (§6). `private`: `true` keeps it and what it needs out of steward. Any other keys are allowed too (e.g. an agent's structured run state) and are not checked |
 | person, team | `areas`: what they own or can help with; `peer`: the steward peer id of the member this person is |
 | resource | `type` (repo / branch / build / doc / link / other), `url`; for a branch, `repo` and `branch` |
 
@@ -93,10 +93,11 @@ credentials live, and anything that would embarrass someone if shared.
   local user. Owner-side `search` matches them but doesn't return them.
 - **The UI** shows them in a separate "Private notes" section with a lock icon, read-only: a write needs
   a reason, so it goes through Claude Code.
-- **Export rule (steward plug-in, `/api/steward/publish`, still to build):** build what leaves the
+- **Export rule (steward plug-in, `/api/steward/publish`, §6):** build what leaves the
   machine from `Node` (`store.mapNode`) only, never from a `nodes` row, `get_node`, or an audit
   snapshot. Audit `before`/`after` are whole rows, private notes included, and `reason` may quote
-  them; nothing exported may read either. A test must cover this when the export lands.
+  them; nothing exported may read either. `steward.db.test.ts` checks publish and describe, over HTTP
+  and through the exec script, never carry them.
 
 **You** (`…0001`) is a person node created by the first migration. It can be edited but not deleted.
 
@@ -111,6 +112,7 @@ Claude Code (`apply_ops` over MCP) use the same ops.
 ```text
 browser ──HTTP/SSE──► server (Fastify) ──► PostgreSQL
 Claude Code ──MCP (/mcp)──►
+steward daemon ──exec──► scripts/steward-backend-ariadne ──HTTP (/api/steward/*)──►
 ```
 
 - **MCP tools:** `get_node` (a node with its edges; for a task, readiness, inherited context, and
@@ -138,9 +140,9 @@ Claude Code ──MCP (/mcp)──►
 
 Ariadne no longer talks to other instances. The libp2p federation (shares, home peers, proposals,
 relay spool, the `/p2p` WebSocket and its tunnel) was removed in 2026-10 (migration
-`009_drop_federation.sql` drops its tables and `nodes.home`). Sharing with the pod moves to
-**steward**, a separate project in its own repo; Ariadne will be one steward back end through a small
-plug-in in this repo (`/api/steward/*`, not built yet). That plug-in must follow the export rule under
+`009_drop_federation.sql` drops its tables and `nodes.home`). Sharing with the pod is **steward**'s job,
+a separate project in its own repo. Ariadne is one steward back end through a small plug-in here
+(`src/server/steward.ts`, `scripts/steward-backend-ariadne`). It follows the export rule under
 **Private notes** (§2): build from `Node`, never from rows, `get_node`, or audit snapshots.
 
 - **Kept:** person `attrs.peer`. It now names the **steward peer id** that maps a person node to a steward
@@ -148,3 +150,69 @@ plug-in in this repo (`/api/steward/*`, not built yet). That plug-in must follow
 - **Left as they were:** nodes replicated here from another instance are now ordinary local nodes;
   audit rows with `via: sync` came from that replication. Undo still works on snapshots that name the
   dropped `home` column (it restores only columns the table still has).
+
+### 6.1 The exec back end
+
+The steward daemon runs `steward-backend-ariadne <verb>` with one JSON object on stdin and reads one
+from stdout (steward's DESIGN.md §3). The script is POSIX `sh` + `curl`: it posts stdin to
+`$ARIADNE_URL/api/steward/<verb>` (default `http://127.0.0.1:3100`), prints the answer, exits 3 for a verb
+it doesn't know, and 1 on any HTTP or connection error. Wire shapes follow steward's `src/item.rs`:
+snake_case keys, times in Unix seconds, `audience` a list of peer ids (empty: the whole pod).
+
+**Who may call:** the same guard as `/mcp` (only the allowed loopback `Host`), and the steward routes also
+refuse any request with an `Origin` header. Browsers always send one on a POST, so no web page, this UI
+included, can read the feed or plant a ticket. The server listens on `0.0.0.0` inside its container, so a
+client-IP check would not help; the published port is bound to loopback.
+
+| Verb | In | Out |
+|---|---|---|
+| `describe` | `{}` | `{ name: "ariadne", owner: You's title, areas: You's attrs.areas, repos: repos of the shared work, capabilities: ["ticket", "answer"] }` |
+| `publish` | `{ since? }` | `{ cursor, upserts: Item[], removed: id[], full? }` |
+| `receive` | `{ ticket, from_name? }` or `{ answer, from?, from_name? }` | `{ localRef: node id }` |
+
+**publish: what is shared.** Opted-in roots (`attrs.steward === true`) and every task they transitively
+need. A task with `attrs.private: true` is pruned with everything below it (unless another shared path
+reaches it). Tasks steward itself made (asks, unmatched answers, intents) are never published as work:
+they are a teammate's content.
+
+| Item | From |
+|---|---|
+| `work` (id = node id) | title; `body`; `state` (open: ready / yours / blocked / waiting, else done / dropped); `repos`, `branch`, `pr_url` from the task's own attrs (`repo`, `repos`, `branch`, `pr_url`), then the repo / branch / PR-link resources it or a task that needs it uses (nearest first), then a GitHub PR URL in its body; `published` from `attrs.published`, else true when a PR is known |
+| `decision` (id = `<node id>:decision:<hash of the line>`) | each decision line; `relates_to` the task |
+| `answer` (id = `<node id>:answer`) | the Answer lines of an Ask task (each with the rest of its paragraph); `relates_to` the ticket, `audience` the asker only. steward sends targeted items by letter, never in the feed |
+
+Bodies over 16 KiB (steward's limit) are clipped.
+
+**publish: the cursor.** `"<newest audit id>-<audit row count>"`. Every graph change adds audit rows, and
+the count also catches a transaction that commits after a newer id was read. If `since` equals the
+current cursor, the answer is empty. Otherwise it is the **whole current set** with `full: true` (steward
+drops unchanged items itself and removes any it holds that are missing), plus a best-effort `removed`:
+tasks touched since `since`, or below one that was, that are no longer shared (deleted, un-opted, made
+private, cut loose). `removed` may name ids that were never published; ids only, never content, and it
+reads only audit ids and edge endpoints, never a node snapshot. Closed work is not removed: it stays with
+state `done` or `dropped`, so a teammate's replica sees that it ended.
+
+**receive.**
+- **Ticket** → task "Ask (Name): question" with the question, sender, ticket id, repo, and context in its
+  body, `attrs.steward = { kind: "ask", ticket, from }`, `waits_on` You (your queue, violet), `involves` the
+  sender, and needed by each open task its `relates_to` names (an item id is a node id, or starts with
+  one). Redelivery returns the same task. You answer by appending `**Answer (Name, YYYY-MM-DD):** ...` and
+  closing it; the next publish sends those lines to the asker.
+- **Answer** → appended as `**Answer (Name, date):** text` to the open task whose `attrs.steward.ticket`
+  is in the answer's `relates_to` (your "Waiting on Name: ..." leaf, which your agent tags
+  `{ kind: "waiting", ticket, to }` when it asks), which it then closes. Redelivery adds nothing. An answer
+  nothing here waits for becomes "Answer (Name): ..." waiting on You, so it isn't lost.
+- **The sender** is the person whose `attrs.peer` is the steward peer id, created (titled `from_name`, or
+  "Steward peer …<id>") if missing. Changes are audited with `via: steward` and that person as the actor.
+
+### 6.2 Decisions
+
+| Date | Decision |
+|---|---|
+| 2026-10-14 | Publish is stateless: the full set with `full: true` whenever the audit log moved, rather than a table of what was published. steward already diffs against its own feed, and a stateless back end can't drift from it. Flip: add a `steward_published (item_id, hash, seq)` table and send true deltas. (Claude, provisional) |
+| 2026-10-14 | The cursor is the newest audit row id plus the row count, not a changeset id: changeset ids are UUIDs with no order. (Claude, provisional) |
+| 2026-10-14 | Closed work stays published with state done / dropped; only un-shared or deleted tasks are removed. Teammates see that work ended. (Claude, provisional) |
+| 2026-10-14 | `attrs.steward` is the opt-in only when it is exactly `true`; an object is bookkeeping on tasks steward made or tracks (`kind`: ask, waiting, answer, intent). One key, no clash with design 11's intent attrs. (Claude, provisional) |
+| 2026-10-14 | A ticket's Ask task is needed by the tasks it is about, so the question shows in that subtree and the task waits until you answer. (Claude, provisional) |
+| 2026-10-14 | Answer items come only from Ask tasks (they have a ticket and an asker), not from Answer lines anywhere in a shared subtree. (Claude, provisional) |
+| 2026-10-14 | The script lives in `scripts/` (this repo has no `bin/`), and the steward routes refuse any `Origin`. (Claude, provisional) |

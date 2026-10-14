@@ -70,6 +70,14 @@ credentials live (never the credentials themselves), and anything that would emb
 the body; it is recorded in the audit log, and history shows it. get_node returns them as node.privateNotes. Never copy
 private notes into a body, a title, an edge note, or anything you send elsewhere.
 
+Sharing with the pod (steward): attrs.steward: true on a task shares it and everything it needs with the user's pod
+(title, body, state, repos, branch, PR link, decision lines; never private notes). attrs.private: true keeps a task and
+what it needs out of a shared subtree. Only opt a subtree in when the user asks. A teammate's question arrives as an
+"Ask (Name): ..." task waiting on You: when the user answers, append "**Answer (Name, YYYY-MM-DD):** ..." to its body and
+close it; steward sends the answer lines to the asker only. When you ask a teammate through steward, add the "Waiting
+on <Name>: ..." leaf as usual with attrs.steward {kind: "waiting", ticket: "<ticket id>", to: "<their peer id>"}: their
+answer is appended there and closes it.
+
 When closing tasks makes others ready, apply_ops lists them as nowReady: offer the user the next one.`;
 
 /** A task's context without the bodies: its own is already in node, and the others can be fetched by id. */

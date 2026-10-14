@@ -22,6 +22,12 @@ export type TaskStatus = z.infer<typeof TaskStatus>;
 export const TaskAttrs = z
   .object({
     guidance: z.string().describe('Instructions that apply to this task and everything it needs (inherited)'),
+    // Steward (docs/DESIGN.md §6): true opts this task and everything it needs in to the pod feed. An object marks
+    // a task that steward made or tracks: { kind: 'ask' | 'waiting' | 'answer' | 'intent', ticket?, from?, to?, ... }.
+    steward: z
+      .union([z.boolean(), z.record(z.string(), z.unknown())])
+      .describe('true: share this task and everything it needs with the pod through steward. An object: steward bookkeeping'),
+    private: z.boolean().describe('true: never share this task or what it needs through steward, even inside a shared subtree'),
   })
   .partial();
 export const OPEN_ATTRS: readonly NodeKind[] = ['task'];
@@ -154,5 +160,8 @@ export const Op = z.discriminatedUnion('op', [
 export type Op = z.infer<typeof Op>;
 export const Ops = z.array(Op).min(1);
 
-/** Where a change came from. Recorded in the audit log. 'sync' appears only on old rows from the removed federation. */
-export type Via = 'ui' | 'mcp' | 'sync';
+/**
+ * Where a change came from. Recorded in the audit log. 'steward': the steward plug-in applied a teammate's ticket,
+ * answer, or intent (the actor is their person node). 'sync' appears only on old rows from the removed federation.
+ */
+export type Via = 'ui' | 'mcp' | 'steward' | 'sync';

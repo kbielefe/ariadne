@@ -1,0 +1,37 @@
+#!/bin/sh
+# Ariadne as a steward back end (docs/DESIGN.md §6). The steward daemon runs
+#   steward-backend-ariadne <verb>
+# with one JSON object on stdin and reads one JSON object from stdout. This script just posts it to
+# the local Ariadne server. Exit 0: OK. Exit 3: verb not supported. Anything else: an error (on stderr).
+#
+# ARIADNE_URL: the Ariadne server (default http://127.0.0.1:3100). It must be the loopback host and port
+# Ariadne allows (ARIADNE_ALLOWED_HOSTS); the endpoints refuse anything else.
+set -eu
+base=${ARIADNE_URL:-http://127.0.0.1:3100}
+
+case "${1:-}" in
+  describe | publish | receive) ;;
+  *)
+    echo "steward-backend-ariadne: verb not supported: ${1:-(none)}" >&2
+    exit 3
+    ;;
+esac
+
+input=$(cat)
+[ -n "$input" ] || input='{}'
+
+status=0
+out=$(printf '%s' "$input" | curl -sS -o - -w '\n%{http_code}' -H 'content-type: application/json' --data-binary @- "$base/api/steward/$1") || status=$?
+if [ "$status" -ne 0 ]; then
+  echo "steward-backend-ariadne: can't reach Ariadne at $base (curl exit $status)" >&2
+  exit 1
+fi
+code=$(printf '%s' "$out" | tail -n 1)
+body=$(printf '%s' "$out" | sed '$d')
+case "$code" in
+  2??) printf '%s\n' "$body" ;;
+  *)
+    echo "steward-backend-ariadne: $1 failed (HTTP $code): $body" >&2
+    exit 1
+    ;;
+esac

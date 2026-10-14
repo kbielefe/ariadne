@@ -59,9 +59,11 @@ scripts/install-quadlet.sh                    # units + secrets from .env, then 
 
 ## Sharing with the pod
 
-Ariadne no longer shares subgraphs itself. Sharing work with teammates moves to **steward**, a separate
-project; Ariadne will be one of its back ends. Private notes never leave this machine. See
-[docs/DESIGN.md](docs/DESIGN.md).
+Ariadne no longer shares subgraphs itself. Sharing work with teammates is **steward**'s job, a separate
+project; Ariadne is one of its back ends. Put `scripts/steward-backend-ariadne` on the steward daemon's
+`PATH` (set `ARIADNE_URL` if Ariadne isn't on `http://127.0.0.1:3100`). Only tasks with
+`attrs.steward: true`, and what they need, are shared. Private notes never leave this machine. See
+[docs/DESIGN.md](docs/DESIGN.md) §6.
 
 ## Development
 

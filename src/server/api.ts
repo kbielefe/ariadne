@@ -1,4 +1,5 @@
-// HTTP for the web UI and /mcp (Claude Code sessions). Both are localhost only, with no authentication.
+// HTTP for the web UI, /mcp (Claude Code sessions), and /api/steward (the steward daemon). All localhost only, with no
+// authentication.
 // UI edits apply directly and are audited.
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
@@ -6,6 +7,7 @@ import { USER_ID } from '../shared/model';
 import { ContextBuilder, describeChange } from './context';
 import type { Core } from './core';
 import { handleMcp } from './mcp';
+import * as steward from './steward';
 import * as s from './store';
 import { who } from './store';
 
@@ -67,6 +69,26 @@ export function registerApi(app: FastifyInstance, core: Core, o: ApiOptions) {
       clearInterval(ping);
       off();
     });
+  });
+
+  // ---- Steward plug-in (scripts/steward-backend-ariadne): for the local steward daemon only. The Host guard above keeps
+  // it to localhost, like /mcp. Browsers always send Origin on a POST, so refusing any Origin keeps web pages out too
+  // (this UI included): no page can read the published feed or plant a ticket.
+  app.post<{ Params: { verb: string } }>('/api/steward/:verb', async (req, reply) => {
+    if (req.headers.origin) return reply.code(403).send({ error: 'The steward endpoints are for the local steward daemon, not browsers' });
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    switch (req.params.verb) {
+      case 'describe':
+        return steward.describe(core);
+      case 'publish': {
+        const { since } = z.object({ since: z.union([z.string(), z.number()]).nullish() }).parse(body);
+        return steward.publish(core, since == null ? null : String(since));
+      }
+      case 'receive':
+        return steward.receive(core, body);
+      default:
+        return reply.code(404).send({ error: `steward verb not supported: ${req.params.verb.slice(0, 40)}` });
+    }
   });
 
   // ---- MCP: no token; the Host/Origin guard above keeps it to localhost.

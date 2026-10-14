@@ -68,9 +68,14 @@ export class ContextBuilder {
   private constructor() {}
 
   static async load(q: Q): Promise<ContextBuilder> {
+    return ContextBuilder.from(await s.listNodes(q, { limit: 5000 }), await s.listEdges(q));
+  }
+
+  /** From a graph already loaded (Node only, so never private notes). */
+  static from(nodes: readonly Node[], edges: readonly Edge[]): ContextBuilder {
     const b = new ContextBuilder();
-    for (const n of await s.listNodes(q, { limit: 5000 })) b.nodes.set(n.id, n);
-    b.edges = await s.listEdges(q);
+    for (const n of nodes) b.nodes.set(n.id, n);
+    b.edges = [...edges];
     return b;
   }
 
