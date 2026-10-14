@@ -33,6 +33,10 @@ describe('graph', () => {
     await expect(core.ops(asUser(), [{ op: 'create_node', kind: 'agent', title: 'Coder' }])).rejects.toThrow();
     await expect(db.query(`INSERT INTO nodes (kind, title) VALUES ('agent', 'Coder')`)).rejects.toThrow(/nodes_kind_check/);
     expect((await db.query(`SELECT to_regclass('events') AS e, to_regclass('timers') AS t`)).rows[0]).toEqual({ e: null, t: null });
+    // Federation is gone: its tables and nodes.home.
+    const fed = ['peers', 'relay_allow', 'invites', 'relay_tickets', 'shares', 'share_members', 'share_log', 'share_nodes', 'share_edges', 'object_sigs', 'proposals', 'spool'];
+    expect((await db.query(`SELECT t FROM unnest($1::text[]) t WHERE to_regclass(t) IS NOT NULL`, [fed])).rows).toEqual([]);
+    expect((await db.query(`SELECT 1 FROM information_schema.columns WHERE table_name = 'nodes' AND column_name = 'home'`)).rowCount).toBe(0);
   });
 
   it('creates tasks with refs; a task waits on what it needs', async () => {
@@ -154,14 +158,15 @@ describe('undo', () => {
     expect(g.edges.filter((e) => e.kind === 'uses')).toMatchObject([{ src: t.t, dst: t.r }]);
   });
 
-  it('undoes changes recorded before private notes existed', async () => {
+  it('undoes changes recorded by an older schema (no private_notes, a since-dropped home)', async () => {
     const t = await ids([{ op: 'create_node', ref: 'a', kind: 'task', title: 'A' }]);
     const upd = asClaude();
     await core.ops(upd, [{ op: 'update_node', id: t.a!, title: 'B' }]);
     const del = asClaude();
     await core.ops(del, [{ op: 'delete_node', id: t.a! }]);
-    // Snapshots written by an older schema have no private_notes key.
-    await db.query(`UPDATE audit SET before = before - 'private_notes', after = after - 'private_notes'`);
+    // Snapshots written by an older schema have no private_notes key, and still name the federation home column.
+    const old = (col: string) => `CASE WHEN ${col} IS NULL THEN NULL ELSE (${col} - 'private_notes') || '{"home": "12D3KooWold"}' END`;
+    await db.query(`UPDATE audit SET before = ${old('before')}, after = ${old('after')} WHERE entity = 'node'`);
     await core.undo(asUser(), del.changeset);
     await core.undo(asUser(), upd.changeset);
     expect(await s.getNode(db, t.a!)).toMatchObject({ title: 'A' });
