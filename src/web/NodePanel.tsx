@@ -120,7 +120,7 @@ export function NodePanel({ id, onSelect, onClose }: { id: string; onSelect(id: 
         <InlineText value={n.body} multiline onSave={(body) => save({ body })} label="Description" placeholder="Markdown. What it is, why it matters, what done looks like." />
       </Section>
 
-      <PrivateNotes text={n.privateNotes} />
+      <PrivateNotes text={n.privateNotes} onSave={save} />
 
       <Attrs node={n} save={save} />
       <Edges detail={d} run={run} onSelect={onSelect} />
@@ -159,10 +159,27 @@ function CopyId({ id }: { id: string }) {
 }
 
 /**
- * Private notes never leave this machine. Read-only here: every write needs a reason for the audit log, so they are
- * written through Claude Code (apply_ops with privateReason).
+ * Private notes never leave this machine. Every write needs a reason, kept in the history, the same rule as
+ * apply_ops with privateReason: the server refuses a write without one.
  */
-function PrivateNotes({ text }: { text: string }) {
+function PrivateNotes({ text, onSave }: { text: string; onSave(p: { privateNotes: string; privateReason: string }): Promise<unknown> }) {
+  const [editing, setEditing] = useState(false);
+  const [v, setV] = useState(text);
+  const [reason, setReason] = useState('');
+  const [saving, setSaving] = useState(false);
+  const start = () => {
+    setV(text);
+    setReason('');
+    setEditing(true);
+  };
+  const ready = v !== text && reason.trim().length > 0;
+  const commit = async () => {
+    if (!ready) return;
+    setSaving(true);
+    const r = await onSave({ privateNotes: v, privateReason: reason.trim() });
+    setSaving(false);
+    if (r !== null) setEditing(false); // useOps returns null on error and shows the message
+  };
   return (
     <Section
       title={
@@ -170,11 +187,47 @@ function PrivateNotes({ text }: { text: string }) {
           <Lock size={13} aria-hidden /> Private notes
         </>
       }
-      open={!!text}
+      open={!!text || editing}
       className="private"
     >
-      {text ? <Md text={text} /> : <p className="muted small">None.</p>}
-      <p className="muted small">Kept on this machine only, never shared. Written through Claude Code, with a reason in the history.</p>
+      {editing ? (
+        <div className="field-edit">
+          <textarea
+            autoFocus
+            aria-label="Private notes"
+            rows={Math.min(16, Math.max(4, v.split('\n').length + 1))}
+            value={v}
+            onChange={(e) => setV(e.target.value)}
+            onKeyDown={(e) => e.key === 'Escape' && setEditing(false)}
+          />
+          <input
+            aria-label="Reason for private notes"
+            placeholder="Why this can't go in the description (required, kept in the history)"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') setEditing(false);
+              if (e.key === 'Enter') void commit();
+            }}
+          />
+          <div className="row">
+            <button type="button" className="btn small primary" disabled={saving || !ready} onClick={() => void commit()}>
+              <Check size={14} /> Save
+            </button>
+            <button type="button" className="btn small" onClick={() => setEditing(false)}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="field-view multi">
+          <div className="field-value">{text ? <Md text={text} /> : <span className="muted small">None.</span>}</div>
+          <button type="button" className="icon" aria-label="Edit Private notes" title="Edit Private notes" onClick={start}>
+            <Pencil size={13} />
+          </button>
+        </div>
+      )}
+      <p className="muted small">Kept on this machine only, never shared. Prefer the description; every change here needs a reason.</p>
     </Section>
   );
 }

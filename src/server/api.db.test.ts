@@ -238,6 +238,22 @@ describe('web API', () => {
     expect(after.at(-1)).toMatchObject({ who: 'Claude (MCP)', via: 'mcp', line: 'updated task "Mine!": title' });
   });
 
+  it('lets you edit private notes in the UI, only with a reason, and keeps the reason in the history', async () => {
+    const made = (await (await post('/api/ops', { ops: [{ op: 'create_node', kind: 'person', title: 'Dana' }] })).json()) as { results: { id: string }[] };
+    const id = made.results[0]!.id;
+    const node = await s.getNode(db, id);
+    expect((await post('/api/ops', { ops: [{ op: 'update_node', id, version: node.version, privateNotes: 'Prefers mornings.' }] })).status).toBe(400);
+    expect((await post('/api/ops', { ops: [{ op: 'update_node', id, version: node.version, privateNotes: 'Prefers mornings.', privateReason: ' ' }] })).status).toBe(400);
+    const ok = await post('/api/ops', { ops: [{ op: 'update_node', id, version: node.version, privateNotes: 'Prefers mornings.', privateReason: 'about a person' }] });
+    expect(ok.status).toBe(200);
+    const detail = (await (await fetch(`${base}/api/nodes/${id}`)).json()) as { node: { privateNotes: string } };
+    expect(detail.node.privateNotes).toBe('Prefers mornings.');
+    const hist = (await (await fetch(`${base}/api/history`)).json()) as { via: string; line: string }[];
+    expect(hist.at(-1)).toMatchObject({ via: 'ui', line: expect.stringContaining('(why: about a person)') });
+    // The graph never carries them.
+    expect(JSON.stringify(await (await fetch(`${base}/api/graph`)).json())).not.toContain('Prefers mornings');
+  });
+
   it('returns the changeset of your edit, so Undo can revert it', async () => {
     const made = (await (await post('/api/ops', { ops: [{ op: 'create_node', kind: 'resource', title: 'Old repo' }] })).json()) as { results: { id: string }[]; changeset: string };
     const id = made.results[0]!.id;
