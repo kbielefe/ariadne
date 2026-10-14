@@ -93,7 +93,7 @@ export interface Tool {
 const tools: Tool[] = [
   {
     name: 'get_node',
-    description: 'One node with its edges and neighbors. `home` is the peer id of the instance that may commit this node (null means this instance, from before federation). node.privateNotes holds the private notes (local only; never copy them into anything shared). For a task, also readiness, inherited context (guidance, resources, people from every task that needs it), and the shared branches it ships on with every task in their scope. pending: true means a change is still waiting on that home. brief: true leaves out neighbor, resource, and people bodies (ids, titles, and status only); use it on busy nodes.',
+    description: 'One node with its edges and neighbors. node.privateNotes holds the private notes (local only; never copy them into anything shared). For a task, also readiness, inherited context (guidance, resources, people from every task that needs it), and the shared branches it ships on with every task in their scope. brief: true leaves out neighbor, resource, and people bodies (ids, titles, and status only); use it on busy nodes.',
     input: z.object({ id: z.uuid(), brief: z.boolean().optional().describe('Neighbors as id, kind, title, status; no bodies besides this node\'s own') }),
     readOnly: true,
     run: async (core, a: { id: string; brief?: boolean }) => {
@@ -162,11 +162,11 @@ const tools: Tool[] = [
   {
     name: 'apply_ops',
     description:
-      'Create, update, or delete nodes and edges in one transaction. A node is committed on the instance that created it (`home` from get_node). An edit to a node homed elsewhere is a proposal: it comes back in `pending` until that instance accepts it, and a stale version is rejected. When it closes tasks, nowReady lists the tasks that just became ready. Ops: create_node (kind, title, body?, privateNotes?, privateReason?, status?, attrs?, ref?), update_node (id, ...; attrs merge, null removes; task attrs take guidance plus any keys of your own, e.g. structured run state; append adds to the body, and section limits body or append to one "## Heading" section, instead of re-sending the whole body; privateNotes replaces and privateAppend adds to the private notes), privateNotes and privateAppend are refused without privateReason (why it must stay private; prefer the body), delete_node, create_edge (src, kind, dst, note?), update_edge, delete_edge (id, or src+kind+dst). Use "ref" on create_node and "$ref" in later ops to link new nodes. Edge kinds: needs (task→task; a root task is one nothing needs), uses (task→resource), involves (task→person/team), reports_to (person/team→person/team), member_of (person/team→team), waits_on (task→person/team/resource it is blocked on outside the user\'s control; the task is blocked, not ready, until closed).',
+      'Create, update, or delete nodes and edges in one transaction. When it closes tasks, nowReady lists the tasks that just became ready. Ops: create_node (kind, title, body?, privateNotes?, privateReason?, status?, attrs?, ref?), update_node (id, ...; attrs merge, null removes; task attrs take guidance plus any keys of your own, e.g. structured run state; append adds to the body, and section limits body or append to one "## Heading" section, instead of re-sending the whole body; privateNotes replaces and privateAppend adds to the private notes), privateNotes and privateAppend are refused without privateReason (why it must stay private; prefer the body), delete_node, create_edge (src, kind, dst, note?), update_edge, delete_edge (id, or src+kind+dst). Use "ref" on create_node and "$ref" in later ops to link new nodes. Edge kinds: needs (task→task; a root task is one nothing needs), uses (task→resource), involves (task→person/team), reports_to (person/team→person/team), member_of (person/team→team), waits_on (task→person/team/resource it is blocked on outside the user\'s control; the task is blocked, not ready, until closed).',
     input: z.object({ ops: z.array(Op).min(1) }),
     run: async (core, a: { ops: Op[] }) => {
       const out = await core.apply(who(null, 'mcp'), a.ops);
-      return { results: out.results, ...(out.pending.length ? { pending: out.pending } : {}), ...(out.nowReady.length ? { nowReady: out.nowReady } : {}) };
+      return { results: out.results, ...(out.nowReady.length ? { nowReady: out.nowReady } : {}) };
     },
   },
   {

@@ -29,7 +29,8 @@ export const OPEN_ATTRS: readonly NodeKind[] = ['task'];
 const ActorAttrs = z
   .object({
     areas: z.array(z.string()).describe('What this person or team owns or can help with'),
-    peer: z.string().describe('Ariadne peer id, when this person stands for an instance'),
+    // Kept from federation and repurposed: maps this person to a steward member (docs/DESIGN.md).
+    peer: z.string().describe('Steward peer id: the steward member this person is'),
   })
   .partial();
 export const PersonAttrs = ActorAttrs;
@@ -61,8 +62,6 @@ export const Node = z.object({
   status: TaskStatus.nullable(),
   attrs: z.record(z.string(), z.unknown()),
   version: z.number().int(),
-  /** Peer id of the instance that commits this node. Null on rows from before federation. */
-  home: z.string().nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -155,5 +154,5 @@ export const Op = z.discriminatedUnion('op', [
 export type Op = z.infer<typeof Op>;
 export const Ops = z.array(Op).min(1);
 
-/** Where a change came from. Recorded in the audit log. */
+/** Where a change came from. Recorded in the audit log. 'sync' appears only on old rows from the removed federation. */
 export type Via = 'ui' | 'mcp' | 'sync';

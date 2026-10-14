@@ -5,7 +5,6 @@ import type { Node } from '../shared/model';
 import { api, type GraphData, remember, useLive } from './api';
 import { GraphView } from './Graph';
 import { NodePicker } from './NodePicker';
-import { Peers } from './Peers';
 
 interface AppState {
   graph: GraphData;
@@ -21,8 +20,6 @@ interface AppState {
   reload(): void;
   /** A short message at the bottom of the screen, with Undo when a changeset is given. */
   notify(text: string, changeset?: string): void;
-  /** This instance's peer id, when federation is on. */
-  selfPeer: string | null;
 }
 
 const Ctx = createContext<AppState | null>(null);
@@ -35,8 +32,6 @@ export function App() {
   const [selected, setSelected] = useState<string | null>(null);
   const [kick, setKick] = useState(0);
   const [notice, setNotice] = useState<{ text: string; changeset?: string } | null>(null);
-  const [peersOpen, setPeersOpen] = useState(false);
-  const [selfPeer, setSelfPeer] = useState<string | null>(null);
 
   useEffect(() => {
     if (!notice) return;
@@ -46,9 +41,6 @@ export function App() {
 
   useEffect(() => {
     api.graph().then(setGraph, () => {});
-  }, [live.version, kick]);
-  useEffect(() => {
-    api.federation().then((s) => setSelfPeer(s.peerId ?? null), () => setSelfPeer(null));
   }, [live.version, kick]);
 
   const byId = useMemo(() => new Map(graph.nodes.map((n) => [n.id, n])), [graph]);
@@ -68,7 +60,6 @@ export function App() {
     name: (id) => (id ? (byId.get(id)?.title ?? '(deleted)') : 'Ariadne'),
     reload: () => setKick((k) => k + 1),
     notify: (text, changeset) => setNotice({ text, ...(changeset ? { changeset } : {}) }),
-    selfPeer,
   };
   const undo = async (changeset: string) => {
     try {
@@ -101,12 +92,8 @@ export function App() {
               <NodePicker placeholder="Focus on a task…" kinds={['task']} onPick={(n) => setFocus(n.id)} />
             )}
           </div>
-          <button className="btn small" onClick={() => setPeersOpen((v) => !v)}>
-            Peers
-          </button>
           <span className={live.connected ? 'live on' : 'live'} title={live.connected ? 'Live' : 'Reconnecting…'} />
         </header>
-        {peersOpen && <Peers onClose={() => setPeersOpen(false)} />}
         <main className="main">
           <GraphView selected={selected} onSelect={setSelected} />
         </main>

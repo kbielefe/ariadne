@@ -11,23 +11,7 @@ export interface NodeDetail {
   node: NodeWithPrivate;
   edges: Edge[];
   neighbors: Node[];
-  pending?: boolean;
   readiness?: { ready: boolean; waitingOn: string[]; external: string[]; state: TaskState };
-}
-
-export interface PendingOp {
-  id: string;
-  home: string;
-  error?: string;
-}
-
-export interface FederationStatus {
-  enabled: boolean;
-  peerId?: string;
-  announce?: string[];
-  peers?: { peerId: string; label: string; offersRelay: boolean }[];
-  shares?: { id: string; rootId: string; rootHome: string; members: string[] }[];
-  pending?: { id: string; home: string }[];
 }
 
 export class ApiError extends Error {}
@@ -46,12 +30,8 @@ async function call<T>(method: 'GET' | 'POST', path: string, body?: unknown): Pr
 export const api = {
   graph: () => call<GraphData>('GET', '/api/graph'),
   node: (id: string) => call<NodeDetail>('GET', `/api/nodes/${id}`),
-  ops: (ops: Op[]) => call<{ results: { op: string; id: string; ref?: string }[]; changeset: string; pending?: PendingOp[]; nowReady?: { id: string; title: string }[] }>('POST', '/api/ops', { ops }),
+  ops: (ops: Op[]) => call<{ results: { op: string; id: string; ref?: string }[]; changeset: string; nowReady?: { id: string; title: string }[] }>('POST', '/api/ops', { ops }),
   undo: (changeset: string) => call<{ undone: number }>('POST', '/api/undo', { changeset }),
-  federation: () => call<FederationStatus>('GET', '/api/federation'),
-  invite: (via: 'direct' | 'relay') => call<{ invite: string }>('POST', '/api/federation/invite', { via }),
-  acceptInvite: (invite: string) => call<{ ok: boolean }>('POST', '/api/federation/accept', { invite }),
-  share: (rootId: string, peerId: string) => call<{ id: string }>('POST', '/api/federation/share', { rootId, peerId }),
 };
 
 /** Live updates over SSE: `version` bumps whenever data changes. */

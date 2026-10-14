@@ -6,8 +6,6 @@ import Fastify from 'fastify';
 import { registerApi } from './api';
 import { Core } from './core';
 import { createPool, migrate } from './db';
-import { Federation } from './federation';
-import { proxyFederation } from './federation/proxy';
 import { Hub } from './hub';
 
 const env = process.env;
@@ -34,12 +32,9 @@ async function main() {
 
   const hub = new Hub();
   const core = new Core(db, hub);
-  const federation = await startFederation(db, hub, core);
 
   const app = Fastify({ logger: { level: env.LOG_LEVEL ?? 'info' }, bodyLimit: 2 * 1024 * 1024 });
   registerApi(app, core, { allowedHosts });
-  // Cloudflared forwards the WebSocket upgrade to this process. libp2p listens beside it.
-  if (federation?.listenPort) proxyFederation(app.server, federation.listenPort);
   const webDir = resolve(env.ARIADNE_WEB_DIR ?? 'dist/web');
   if (existsSync(webDir)) {
     await app.register(fastifyStatic, { root: webDir });
@@ -52,7 +47,6 @@ async function main() {
   await app.listen({ host, port });
   const shutdown = async () => {
     await app.close();
-    if (federation) await federation.fed.stop();
     await db.end();
     process.exit(0);
   };
@@ -64,23 +58,3 @@ main().catch((err) => {
   console.error(err);
   process.exit(1);
 });
-
-/** WebSocket federation. `ARIADNE_FEDERATION=off` leaves the graph local. */
-async function startFederation(db: ReturnType<typeof createPool>, hub: Hub, core: Core) {
-  if (env.ARIADNE_FEDERATION === 'off') return null;
-  const relay = env.ARIADNE_RELAY ?? 'off';
-  if (relay !== 'off' && relay !== 'server' && relay !== 'client') throw new Error('ARIADNE_RELAY must be off, server, or client');
-  const listenPort = Number(env.ARIADNE_FEDERATION_PORT ?? 3101);
-  const listen = env.ARIADNE_FEDERATION_LISTEN === 'off' ? undefined : { host: '127.0.0.1', port: listenPort };
-  const fed = await Federation.start(db, hub, {
-    keyFile: env.ARIADNE_PEER_KEY_FILE ?? 'secrets/peer_key',
-    ...(listen ? { listen } : {}),
-    relay,
-    ...(env.ARIADNE_PUBLIC_URL ? { publicUrl: env.ARIADNE_PUBLIC_URL } : {}),
-    ...(env.ARIADNE_LAN_URL ? { lanUrl: env.ARIADNE_LAN_URL } : {}),
-  });
-  core.federation = fed;
-  fed.core = core;
-  console.log(`Federation ${fed.peerId} via ${fed.announce().join(' ') || 'outbound only'}`);
-  return { fed, listenPort: listen ? listenPort : 0 };
-}

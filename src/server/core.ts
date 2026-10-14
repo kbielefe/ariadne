@@ -2,16 +2,18 @@
 import { readiness, taskState } from '../shared/graph';
 import type { Edge, Node, NodeWithPrivate } from '../shared/model';
 import { type Db, withTx } from './db';
-import type { ApplyOutcome, Federation } from './federation';
 import type { Hub } from './hub';
-import { applyOps } from './ops';
+import { applyOps, type OpResult } from './ops';
 import * as s from './store';
 import type { Ctx, Who } from './store';
 
-export class Core {
-  /** Set when this process is speaking to other Ariadne instances. */
-  federation: Federation | null = null;
+export interface ApplyOutcome {
+  results: OpResult[];
+  /** Open tasks that this batch made ready by closing what they needed. */
+  nowReady: { id: string; title: string }[];
+}
 
+export class Core {
   constructor(
     readonly db: Db,
     readonly hub: Hub,
@@ -24,29 +26,23 @@ export class Core {
     return result;
   }
 
-  /** The committed op results. Callers that need proposals still waiting use `apply`. */
+  /** The op results only. `apply` also reports what became ready. */
   ops(w: Who, ops: unknown) {
-    if (!this.federation) return this.run(w, (c) => applyOps(c, ops));
-    return this.federation.apply(w, ops).then((out) => out.results);
+    return this.run(w, (c) => applyOps(c, ops));
   }
 
-  /** Local ops commit here. Ops on a node homed elsewhere stay pending until that home accepts them. */
   async apply(w: Who, ops: unknown): Promise<ApplyOutcome> {
-    if (this.federation) return this.federation.apply(w, ops);
     return this.run(w, async (c) => {
       const list = Array.isArray(ops) ? ops : [];
       const closing = list.flatMap((op) => (op && typeof op === 'object' && (op as { op?: string }).op === 'update_node' && (op as { status?: string }).status && (op as { status?: string }).status !== 'open' && typeof (op as { id?: string }).id === 'string' && !(op as { id: string }).id.startsWith('$') ? [(op as { id: string }).id] : []));
       const wasOpen = closing.length ? (await c.tx.query(`SELECT id FROM nodes WHERE id::text = ANY($1) AND status = 'open'`, [closing])).rows.map((r) => r.id as string) : [];
       const results = await applyOps(c, ops);
-      return { results, pending: [], nowReady: await this.newlyReady(c.tx, wasOpen) };
+      return { results, nowReady: await this.newlyReady(c.tx, wasOpen) };
     });
   }
 
-  async undo(w: Who, changeset: string) {
-    if (this.federation) await this.federation.assertUndoable(changeset);
-    const undone = await this.run(w, (c) => s.undoChangeset(c, changeset));
-    if (this.federation) await this.federation.afterLocal();
-    return undone;
+  undo(w: Who, changeset: string) {
+    return this.run(w, (c) => s.undoChangeset(c, changeset));
   }
 
   async graph(): Promise<{ nodes: Node[]; edges: Edge[] }> {
@@ -75,8 +71,7 @@ export class Core {
     const edges = all.filter((e) => e.src === id || e.dst === id);
     const others = await Promise.all([...new Set(edges.map((e) => (e.src === id ? e.dst : e.src)))].map((n) => s.getNode(this.db, n)));
     const byId = new Map([node, ...others].map((n) => [n.id, n]));
-    const pending = this.federation ? (await import('./federation/repo')).pendingForNode(this.db, id) : false;
-    return { node, edges, neighbors: others, ...(pending ? { pending: true } : {}), ...(node.kind === 'task' ? { readiness: withState(readiness(node, all, byId)) } : {}) };
+    return { node, edges, neighbors: others, ...(node.kind === 'task' ? { readiness: withState(readiness(node, all, byId)) } : {}) };
   }
 }
 

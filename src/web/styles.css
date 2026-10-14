@@ -154,29 +154,6 @@ code,
 .main {
   min-height: 0;
 }
-.peers {
-  position: absolute;
-  z-index: 5;
-  top: 52px;
-  right: 16px;
-  width: min(420px, calc(100vw - 32px));
-  max-height: calc(100vh - 80px);
-  overflow: auto;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
-  padding: 12px 14px;
-}
-.peers textarea,
-.peers input {
-  width: 100%;
-  margin: 6px 0;
-}
-.peers ul {
-  padding-left: 18px;
-  word-break: break-all;
-}
 
 /* ---------------------------------------------------------------- buttons, chips */
 .btn {

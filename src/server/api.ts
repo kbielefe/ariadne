@@ -7,7 +7,7 @@ import { ContextBuilder, describeChange } from './context';
 import type { Core } from './core';
 import { handleMcp } from './mcp';
 import * as s from './store';
-import { Invalid, who } from './store';
+import { who } from './store';
 
 export interface ApiOptions {
   allowedHosts: string[];
@@ -52,33 +52,9 @@ export function registerApi(app: FastifyInstance, core: Core, o: ApiOptions) {
   app.post('/api/ops', async (req) => {
     const w = who(USER_ID, 'ui');
     const out = await core.apply(w, (req.body as { ops?: unknown })?.ops);
-    return { results: out.results, changeset: w.changeset, ...(out.pending.length ? { pending: out.pending } : {}), ...(out.nowReady.length ? { nowReady: out.nowReady } : {}) };
+    return { results: out.results, changeset: w.changeset, ...(out.nowReady.length ? { nowReady: out.nowReady } : {}) };
   });
   app.post('/api/undo', async (req) => ({ undone: await core.undo(who(USER_ID, 'ui'), z.object({ changeset: z.uuid() }).parse(req.body).changeset) }));
-
-  app.get('/api/federation', async () => {
-    if (!core.federation) return { enabled: false };
-    const status = await core.federation.status();
-    return { enabled: true, ...status, peers: status.peers.map(({ publicKey: _key, ...peer }) => peer) };
-  });
-  app.post('/api/federation/invite', async (req) => {
-    const fed = core.federation;
-    if (!fed) throw new Invalid('federation is off');
-    const via = z.object({ via: z.enum(['direct', 'relay']).optional() }).parse(req.body ?? {});
-    return { invite: await fed.invite(via.via ?? 'direct') };
-  });
-  app.post('/api/federation/accept', async (req) => {
-    const fed = core.federation;
-    if (!fed) throw new Invalid('federation is off');
-    await fed.accept(z.object({ invite: z.string().min(1) }).parse(req.body).invite);
-    return { ok: true };
-  });
-  app.post('/api/federation/share', async (req) => {
-    const fed = core.federation;
-    if (!fed) throw new Invalid('federation is off');
-    const body = z.object({ rootId: z.uuid(), peerId: z.string().min(1) }).parse(req.body);
-    return { id: await fed.share(body.rootId, body.peerId) };
-  });
 
   // Server-sent events: browsers refetch on "changed".
   app.get('/api/stream', (req: FastifyRequest, reply: FastifyReply) => {

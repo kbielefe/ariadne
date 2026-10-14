@@ -52,7 +52,7 @@ function loadFilters(): Filters {
 }
 
 export function GraphView({ selected, onSelect }: { selected: string | null; onSelect(id: string | null): void }) {
-  const { graph, byId, impact, focus, setFocus, selfPeer } = useApp();
+  const { graph, byId, impact, focus, setFocus } = useApp();
   const [f, setF] = useState<Filters>(loadFilters);
   const [creating, setCreating] = useState(false);
   const [sort, setSortState] = useState<Sort>(loadSort);
@@ -118,7 +118,6 @@ export function GraphView({ selected, onSelect }: { selected: string | null; onS
         if (!graph.edges.some((e) => e.kind === 'needs' && e.dst === id)) classes.push('root');
       }
       if (id === focus) classes.push('focus');
-      if (n.home && n.home !== selfPeer) classes.push('foreign');
       const label = n.title.length > 64 ? `${n.title.slice(0, 63)}…` : n.title;
       // The canvas draws this as a badge on the node's top-right corner.
       const badge = f.showImpact && n.kind === 'task' ? (impact.get(id) ?? 0) : undefined;
@@ -126,7 +125,7 @@ export function GraphView({ selected, onSelect }: { selected: string | null; onS
     }
     for (const e of edges) if (ids.has(e.src) && ids.has(e.dst)) els.push({ group: 'edges', data: { id: e.id, source: e.src, target: e.dst, label: e.kind === 'needs' ? '' : EDGE_RULES[e.kind].label, order: order.get(e.dst) }, classes: e.kind === 'waits_on' && e.dst === USER_ID ? `${e.kind} to-you` : e.kind });
     return els;
-  }, [graph, byId, impact, f, focus, sort, selfPeer]);
+  }, [graph, byId, impact, f, focus, sort]);
 
   // Each view remembers its own arrangement.
   const viewKey = [layout, sort, focus ?? '', focus ? `${f.direction}${f.depth}` : ''].join('|');
@@ -350,7 +349,6 @@ function styles(): cytoscape.StylesheetJson {
     },
     { selector: 'node.task.ready', style: { 'border-color': good, 'border-width': 2.5 } },
     { selector: 'node.task.waiting', style: { 'border-style': 'dashed' } },
-    { selector: 'node.foreign', style: { 'border-style': 'dashed', 'border-width': 2.5 } },
     // Blocked outside the user's control (a review, a CI build, a merge): yellow, so it stands out from waiting on subtasks.
     { selector: 'node.task.blocked', style: { 'border-color': blocked, 'border-width': 3, 'background-color': blockedSoft } },
     // Waits only on you (a review, a decision): violet, so your queue stands out from what an agent can take (green).
