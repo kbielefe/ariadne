@@ -30,6 +30,7 @@ const iso = (d: unknown) => (d instanceof Date ? d.toISOString() : d == null ? n
 
 // ---------------------------------------------------------------- mapping
 
+/** Leaves out private_notes on purpose: see Node in shared/model.ts. Use privateNotes() where the local user asked for them. */
 export function mapNode(r: Record<string, unknown>): Node {
   return {
     id: r.id as string,
@@ -58,6 +59,13 @@ export async function getNode(q: Q, id: string, o: { lock?: boolean } = {}): Pro
   return mapNode(r.rows[0]);
 }
 
+/** The node's private notes. Only for the local user's node view and for applying ops; never export them. */
+export async function privateNotes(q: Q, id: string): Promise<string> {
+  const r = await q.query('SELECT private_notes FROM nodes WHERE id = $1', [id]);
+  if (!r.rows[0]) throw new NotFound(`No node ${id}`);
+  return r.rows[0].private_notes as string;
+}
+
 export async function findNode(q: Q, id: string): Promise<Node | null> {
   const r = await q.query('SELECT * FROM nodes WHERE id = $1', [id]);
   return r.rows[0] ? mapNode(r.rows[0]) : null;
@@ -73,7 +81,8 @@ export async function listNodes(q: Q, f: { kind?: string; query?: string; status
   const args: unknown[] = [];
   if (f.kind) where.push(`kind = $${args.push(f.kind)}`);
   if (f.status) where.push(`status = $${args.push(f.status)}`);
-  if (f.query) where.push(`(title ILIKE $${args.push(`%${f.query}%`)} OR body ILIKE $${args.length})`);
+  // Owner-side search covers the private notes too; the results never include them (mapNode).
+  if (f.query) where.push(`(title ILIKE $${args.push(`%${f.query}%`)} OR body ILIKE $${args.length} OR private_notes ILIKE $${args.length})`);
   if (f.decisions) where.push(`body ~ $${args.push(DECISION_SQL)}`);
   const sql = `SELECT * FROM nodes ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY updated_at DESC LIMIT ${Math.min(f.limit ?? 1000, 5000)}`;
   return (await q.query(sql, args)).rows.map(mapNode);
@@ -88,10 +97,11 @@ export async function listEdges(q: Q, f: { node?: string } = {}): Promise<Edge[]
 
 type Entity = 'node' | 'edge';
 
-async function audit(c: Ctx, entity: Entity, entityId: string, action: 'create' | 'update' | 'delete', before: unknown, after: unknown) {
+// Snapshots are whole rows, private notes included: the audit log is local, and nothing exported may read it.
+async function audit(c: Ctx, entity: Entity, entityId: string, action: 'create' | 'update' | 'delete', before: unknown, after: unknown, reason?: string) {
   await c.tx.query(
-    `INSERT INTO audit (changeset, actor, via, entity, entity_id, action, before, after) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-    [c.who.changeset, c.who.actor, c.who.via, entity, entityId, action, before == null ? null : JSON.stringify(before), after == null ? null : JSON.stringify(after)],
+    `INSERT INTO audit (changeset, actor, via, entity, entity_id, action, before, after, reason) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+    [c.who.changeset, c.who.actor, c.who.via, entity, entityId, action, before == null ? null : JSON.stringify(before), after == null ? null : JSON.stringify(after), reason ?? null],
   );
 }
 
@@ -104,31 +114,40 @@ async function snapshot(q: Q, entity: Entity, id: string): Promise<Record<string
 
 // ---------------------------------------------------------------- node writes
 
-export async function insertNode(c: Ctx, n: { kind: string; title: string; body?: string; status?: string | null; attrs?: Record<string, unknown> }): Promise<Node> {
-  const r = await c.tx.query('INSERT INTO nodes (kind, title, body, status, attrs, home) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *', [
+/** `privateReason` is recorded in the audit row; ops require it whenever privateNotes is given. */
+export async function insertNode(
+  c: Ctx,
+  n: { kind: string; title: string; body?: string; privateNotes?: string; privateReason?: string; status?: string | null; attrs?: Record<string, unknown> },
+): Promise<Node> {
+  const r = await c.tx.query('INSERT INTO nodes (kind, title, body, status, attrs, home, private_notes) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *', [
     n.kind,
     n.title,
     n.body ?? '',
     n.kind === 'task' ? (n.status ?? 'open') : null,
     JSON.stringify(n.attrs ?? {}),
     c.home ?? null,
+    n.privateNotes ?? '',
   ]);
   const node = mapNode(r.rows[0]);
-  await audit(c, 'node', node.id, 'create', null, await snapshot(c.tx, 'node', node.id));
+  await audit(c, 'node', node.id, 'create', null, await snapshot(c.tx, 'node', node.id), n.privateReason);
   return node;
 }
 
-export async function patchNode(c: Ctx, id: string, p: { title?: string; body?: string; status?: string; attrs?: Record<string, unknown>; version?: number }): Promise<Node> {
+export async function patchNode(
+  c: Ctx,
+  id: string,
+  p: { title?: string; body?: string; privateNotes?: string; privateReason?: string; status?: string; attrs?: Record<string, unknown>; version?: number },
+): Promise<Node> {
   const before = await snapshot(c.tx, 'node', id);
   if (!before) throw new NotFound(`No node ${id}`);
   if (p.version != null && p.version !== before.version) throw new Conflict(`Node ${id} changed (version ${before.version}, you had ${p.version}). Reload and try again.`);
   const r = await c.tx.query(
     `UPDATE nodes SET title = coalesce($2, title), body = coalesce($3, body), status = coalesce($4, status),
-       attrs = jsonb_strip_nulls(attrs || coalesce($5::jsonb, '{}')), version = version + 1, updated_at = now()
+       attrs = jsonb_strip_nulls(attrs || coalesce($5::jsonb, '{}')), private_notes = coalesce($6, private_notes), version = version + 1, updated_at = now()
      WHERE id = $1 RETURNING *`,
-    [id, p.title ?? null, p.body ?? null, p.status ?? null, p.attrs ? JSON.stringify(p.attrs) : null],
+    [id, p.title ?? null, p.body ?? null, p.status ?? null, p.attrs ? JSON.stringify(p.attrs) : null, p.privateNotes ?? null],
   );
-  await audit(c, 'node', id, 'update', before, await snapshot(c.tx, 'node', id));
+  await audit(c, 'node', id, 'update', before, await snapshot(c.tx, 'node', id), p.privateReason);
   return mapNode(r.rows[0]);
 }
 
@@ -182,6 +201,8 @@ export interface AuditRow {
   action: 'create' | 'update' | 'delete';
   before: Record<string, unknown> | null;
   after: Record<string, unknown> | null;
+  /** Why, when the change had to say so (every private notes write does). */
+  reason: string | null;
   undone: boolean;
 }
 
@@ -196,6 +217,7 @@ export const mapAudit = (r: Record<string, unknown>): AuditRow => ({
   action: r.action as AuditRow['action'],
   before: (r.before as Record<string, unknown>) ?? null,
   after: (r.after as Record<string, unknown>) ?? null,
+  reason: (r.reason as string) ?? null,
   undone: r.undone as boolean,
 });
 
@@ -208,6 +230,9 @@ export async function listAudit(q: Q, f: { changeset?: string; since?: string; v
   const sql = `SELECT * FROM audit ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY id DESC LIMIT ${Math.min(f.limit ?? 500, 5000)}`;
   return (await q.query(sql, args)).rows.map(mapAudit).reverse();
 }
+
+/** Defaults for node columns added after the first audit rows were written. */
+const NODE_DEFAULTS = { private_notes: '' };
 
 /**
  * Reverts a change set, newest change first. The revert is itself audited (in `c.who.changeset`),
@@ -225,12 +250,15 @@ export async function undoChangeset(c: Ctx, changeset: string): Promise<number> 
       else await removeEdge(c, a.entityId);
     } else if (a.action === 'delete') {
       if (current) continue;
-      await c.tx.query(`INSERT INTO ${table} SELECT * FROM jsonb_populate_record(null::${table}, $1)`, [JSON.stringify(a.before)]);
+      // Snapshots from before a NOT NULL column was added lack it; give it the column's default.
+      const row = a.entity === 'node' ? { ...NODE_DEFAULTS, ...a.before } : a.before;
+      await c.tx.query(`INSERT INTO ${table} SELECT * FROM jsonb_populate_record(null::${table}, $1)`, [JSON.stringify(row)]);
       await audit(c, a.entity, a.entityId, 'create', null, a.before);
     } else {
       if (!current) throw new Conflict(`Can't undo: ${a.entity} ${a.entityId} was deleted since`);
       if (a.entity === 'node' && a.after && current.version !== a.after.version) throw new Conflict(`Can't undo: ${String(current.title)} changed again since`);
-      const cols = Object.keys(a.before!).filter((k) => k !== 'id');
+      // Only columns both the snapshot and the table have: older snapshots may lack newer columns, or name dropped ones.
+      const cols = Object.keys(a.before!).filter((k) => k !== 'id' && k in current);
       const restored = a.entity === 'node' ? { ...a.before, version: Number(current.version) + 1, updated_at: new Date().toISOString() } : a.before;
       await c.tx.query(
         `UPDATE ${table} SET (${cols.join(', ')}) = (SELECT ${cols.join(', ')} FROM jsonb_populate_record(null::${table}, $2)) WHERE id = $1`,

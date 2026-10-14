@@ -138,6 +138,64 @@ describe('MCP', () => {
   });
 });
 
+describe('private notes', () => {
+  it('refuses private writes without a reason, records the reason, and shows the notes only in the node view', async () => {
+    const client = await mcp();
+    const fails = async (op: Record<string, unknown>) => {
+      const r = await client.callTool({ name: 'apply_ops', arguments: { ops: [op] } });
+      expect(r.isError).toBe(true);
+      return JSON.stringify(r.content);
+    };
+    expect(await fails({ op: 'create_node', kind: 'person', title: 'Bob', privateNotes: 'Frank opinion.' })).toMatch(/privateReason/);
+    expect(await fails({ op: 'create_node', kind: 'person', title: 'Bob', privateNotes: 'Frank opinion.', privateReason: '  ' })).toMatch(/privateReason/);
+    expect(await fails({ op: 'create_node', kind: 'person', title: 'Bob', privateReason: 'no notes to justify' })).toMatch(/privateReason/);
+    expect(await s.listNodes(db, { query: 'Bob' })).toEqual([]);
+
+    const made = await call<{ results: { id: string }[] }>(client, 'apply_ops', {
+      ops: [{ op: 'create_node', kind: 'person', title: 'Bob', body: 'Owns RBAC.', privateNotes: 'Prefers async; avoid Friday asks.', privateReason: 'opinion about a person' }],
+    });
+    const bob = made.results[0]!.id;
+    expect(await fails({ op: 'update_node', id: bob, privateAppend: 'More.' })).toMatch(/privateReason/);
+    expect(await fails({ op: 'update_node', id: bob, privateNotes: 'x', privateAppend: 'y', privateReason: 'r' })).toMatch(/not both/);
+    await call(client, 'apply_ops', { ops: [{ op: 'update_node', id: bob, privateAppend: 'On leave in November.', privateReason: 'HR matter' }] });
+
+    // get_node returns them to the local user.
+    const d = await call<{ node: { body: string; privateNotes: string } }>(client, 'get_node', { id: bob });
+    expect(d.node).toMatchObject({ body: 'Owns RBAC.', privateNotes: 'Prefers async; avoid Friday asks.\n\nOn leave in November.' });
+
+    // The audit log and history say why.
+    const hist = await call<{ items: { entityId: string; action: string; reason: string | null }[] }>(client, 'history', {});
+    expect(hist.items.filter((h) => h.entityId === bob).map((h) => [h.action, h.reason])).toEqual([
+      ['create', 'opinion about a person'],
+      ['update', 'HR matter'],
+    ]);
+    const lines = ((await (await fetch(`${base}/api/history`)).json()) as { line: string }[]).map((h) => h.line);
+    expect(lines).toContain('updated person "Bob": private_notes (why: HR matter)');
+
+    // Nothing else carries them: graph, search, neighbors. Search still finds the node by them.
+    const t = await call<{ results: { id: string }[] }>(client, 'apply_ops', { ops: [{ op: 'create_node', ref: 't', kind: 'task', title: 'RBAC review' }, { op: 'create_edge', src: '$t', kind: 'involves', dst: bob }] });
+    const found = await call<{ items: { id: string }[] }>(client, 'search', { query: 'Friday' });
+    expect(found.items.map((n) => n.id)).toEqual([bob]);
+    const lists = [await core.graph(), found, await call(client, 'graph', {}), await (await fetch(`${base}/api/graph`)).json()];
+    for (const v of lists) expect(JSON.stringify(v)).not.toMatch(/Friday|November|privateNotes/);
+    // A neighbor's view has only its own (empty) notes.
+    const task = await call<{ node: { privateNotes: string } }>(client, 'get_node', { id: t.results[0]!.id });
+    expect(task.node.privateNotes).toBe('');
+    expect(JSON.stringify(task)).not.toMatch(/Friday|November/);
+    await client.close();
+  });
+
+  it('the UI node view gets them, and undo restores them', async () => {
+    const w = who(null, 'mcp');
+    const [id] = (await core.ops(w, [{ op: 'create_node', kind: 'task', title: 'Reorg', privateNotes: 'Not announced yet.', privateReason: 'unannounced plan' }])).map((r) => r.id);
+    const w2 = who(null, 'mcp');
+    await core.ops(w2, [{ op: 'update_node', id: id!, privateNotes: '', privateReason: 'announced; moved to the body' }]);
+    expect(((await (await fetch(`${base}/api/nodes/${id}`)).json()) as { node: { privateNotes: string } }).node.privateNotes).toBe('');
+    await core.undo(who(USER_ID, 'ui'), w2.changeset);
+    expect(((await (await fetch(`${base}/api/nodes/${id}`)).json()) as { node: { privateNotes: string } }).node.privateNotes).toBe('Not announced yet.');
+  });
+});
+
 describe('decisions', () => {
   it('search with decisions: true finds decision lines in bodies, and only those nodes', async () => {
     await core.ops(who(null, 'mcp'), [

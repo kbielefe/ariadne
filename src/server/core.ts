@@ -1,6 +1,6 @@
 // The application core: every change goes through here, in one transaction, then the hub is told.
 import { readiness, taskState } from '../shared/graph';
-import type { Edge, Node } from '../shared/model';
+import type { Edge, Node, NodeWithPrivate } from '../shared/model';
 import { type Db, withTx } from './db';
 import type { ApplyOutcome, Federation } from './federation';
 import type { Hub } from './hub';
@@ -68,8 +68,9 @@ export class Core {
     return r.rows.map((x) => ({ id: x.id as string, title: x.title as string }));
   }
 
+  /** The node view for the local user (UI and MCP get_node): the only read that includes the node's private notes. Never export it. */
   async nodeDetail(id: string) {
-    const node = await s.getNode(this.db, id);
+    const node: NodeWithPrivate = { ...(await s.getNode(this.db, id)), privateNotes: await s.privateNotes(this.db, id) };
     const all = await s.listEdges(this.db);
     const edges = all.filter((e) => e.src === id || e.dst === id);
     const others = await Promise.all([...new Set(edges.map((e) => (e.src === id ? e.dst : e.src)))].map((n) => s.getNode(this.db, n)));

@@ -66,7 +66,13 @@ export const Node = z.object({
   createdAt: z.string(),
   updatedAt: z.string(),
 });
+/**
+ * A node as the graph, search, and every list see it. It never carries the private notes: only the node view
+ * (get_node, /api/nodes/:id) adds them, as `privateNotes`, for the local user. Anything exported off this
+ * machine (the steward plug-in) must build from Node, never from the nodes row or an audit snapshot.
+ */
 export type Node = z.infer<typeof Node>;
+export type NodeWithPrivate = Node & { privateNotes: string };
 
 // ---------------------------------------------------------------- edges
 
@@ -101,27 +107,46 @@ export type Edge = z.infer<typeof Edge>;
 
 const IdOrRef = z.string().min(1).describe('A node id, or "$name" for a node created earlier in this batch');
 
+// Private notes never leave this machine (see docs/DESIGN.md, "Private notes"). Every write to them says why, and the
+// reason goes in the audit row, so history shows it. The public body is preferred.
+const PrivateNotes = z.string().describe('Notes that must never leave this machine. Prefer the body. Needs privateReason');
+const PrivateReason = z
+  .string()
+  .refine((r) => r.trim().length > 0, 'privateReason must say why')
+  .describe('Why this must stay private rather than go in the body. Recorded in the audit log');
+const PRIVATE_RULE = 'privateNotes and privateAppend need privateReason (why this must stay private rather than go in the body), and privateReason needs one of them';
+
 export const Op = z.discriminatedUnion('op', [
-  z.strictObject({
-    op: z.literal('create_node'),
-    ref: z.string().optional(),
-    kind: NodeKind,
-    title: z.string().min(1),
-    body: z.string().optional(),
-    status: TaskStatus.optional(),
-    attrs: z.record(z.string(), z.unknown()).optional(),
-  }),
-  z.strictObject({
-    op: z.literal('update_node'),
-    id: IdOrRef,
-    title: z.string().min(1).optional(),
-    body: z.string().optional().describe('The whole body, or with section only that section'),
-    append: z.string().optional().describe('Text to add at the end of the body, or with section at the end of that section'),
-    section: z.string().optional().describe('A heading such as "## Log": body or append then applies to just that section (created at the end if missing)'),
-    status: TaskStatus.optional(),
-    attrs: z.record(z.string(), z.unknown()).optional().describe('Merged into existing attrs; null removes a key'),
-    version: z.number().int().optional().describe('Fail if the node changed since this version'),
-  }),
+  z
+    .strictObject({
+      op: z.literal('create_node'),
+      ref: z.string().optional(),
+      kind: NodeKind,
+      title: z.string().min(1),
+      body: z.string().optional(),
+      privateNotes: PrivateNotes.optional(),
+      privateReason: PrivateReason.optional(),
+      status: TaskStatus.optional(),
+      attrs: z.record(z.string(), z.unknown()).optional(),
+    })
+    .refine((o) => (o.privateNotes != null) === (o.privateReason != null), { message: PRIVATE_RULE, path: ['privateReason'] }),
+  z
+    .strictObject({
+      op: z.literal('update_node'),
+      id: IdOrRef,
+      title: z.string().min(1).optional(),
+      body: z.string().optional().describe('The whole body, or with section only that section'),
+      append: z.string().optional().describe('Text to add at the end of the body, or with section at the end of that section'),
+      section: z.string().optional().describe('A heading such as "## Log": body or append then applies to just that section (created at the end if missing)'),
+      privateNotes: PrivateNotes.optional().describe('Replace the private notes. Needs privateReason'),
+      privateAppend: z.string().optional().describe('Text to add at the end of the private notes. Needs privateReason'),
+      privateReason: PrivateReason.optional(),
+      status: TaskStatus.optional(),
+      attrs: z.record(z.string(), z.unknown()).optional().describe('Merged into existing attrs; null removes a key'),
+      version: z.number().int().optional().describe('Fail if the node changed since this version'),
+    })
+    .refine((o) => !(o.privateNotes != null && o.privateAppend != null), { message: 'give privateNotes or privateAppend, not both', path: ['privateAppend'] })
+    .refine((o) => (o.privateNotes != null || o.privateAppend != null) === (o.privateReason != null), { message: PRIVATE_RULE, path: ['privateReason'] }),
   z.strictObject({ op: z.literal('delete_node'), id: IdOrRef }),
   z.strictObject({ op: z.literal('create_edge'), src: IdOrRef, kind: EdgeKind, dst: IdOrRef, note: z.string().optional() }),
   z.strictObject({ op: z.literal('update_edge'), id: Id, note: z.string() }),

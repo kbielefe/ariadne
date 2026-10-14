@@ -135,9 +135,10 @@ export function describeChange(a: s.AuditRow, names: { name(id: string | null): 
   const row = (a.after ?? a.before ?? {}) as Record<string, unknown>;
   if (a.entity === 'node') {
     const what = `${row.kind} "${row.title}"`;
-    if (a.action !== 'update') return `${a.action}d ${what}`;
+    if (a.action !== 'update') return `${a.action}d ${what}${a.reason ? ` (why: ${a.reason})` : ''}`;
     const changed = Object.keys(row).filter((k) => !['version', 'updated_at'].includes(k) && JSON.stringify(a.before?.[k]) !== JSON.stringify(a.after?.[k]));
-    return `updated ${what}: ${changed.map((k) => (k === 'status' ? `status ${a.before?.status} → ${a.after?.status}` : k)).join(', ')}`;
+    const fields = changed.map((k) => (k === 'status' ? `status ${a.before?.status} → ${a.after?.status}` : k)).join(', ');
+    return `updated ${what}: ${fields}${a.reason ? ` (why: ${a.reason})` : ''}`;
   }
   return `${a.action === 'delete' ? 'removed' : a.action === 'create' ? 'added' : 'updated'} edge "${names.name(row.src as string)}" ${row.kind} "${names.name(row.dst as string)}"`;
 }

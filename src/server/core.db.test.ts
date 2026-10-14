@@ -154,6 +154,20 @@ describe('undo', () => {
     expect(g.edges.filter((e) => e.kind === 'uses')).toMatchObject([{ src: t.t, dst: t.r }]);
   });
 
+  it('undoes changes recorded before private notes existed', async () => {
+    const t = await ids([{ op: 'create_node', ref: 'a', kind: 'task', title: 'A' }]);
+    const upd = asClaude();
+    await core.ops(upd, [{ op: 'update_node', id: t.a!, title: 'B' }]);
+    const del = asClaude();
+    await core.ops(del, [{ op: 'delete_node', id: t.a! }]);
+    // Snapshots written by an older schema have no private_notes key.
+    await db.query(`UPDATE audit SET before = before - 'private_notes', after = after - 'private_notes'`);
+    await core.undo(asUser(), del.changeset);
+    await core.undo(asUser(), upd.changeset);
+    expect(await s.getNode(db, t.a!)).toMatchObject({ title: 'A' });
+    expect(await s.privateNotes(db, t.a!)).toBe('');
+  });
+
   it('refuses to undo over a newer edit', async () => {
     const t = await ids([{ op: 'create_node', ref: 'a', kind: 'task', title: 'A' }]);
     const w = asClaude();

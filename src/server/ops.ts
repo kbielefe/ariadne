@@ -67,7 +67,9 @@ async function applyOne(c: Ctx, op: Op, resolve: (v: string) => string, refs: Ma
       } catch (err) {
         throw new Invalid((err as Error).message);
       }
-      await s.patchNode(c, id, { ...op, body });
+      // The Op schema already insists on privateReason with either of these; patchNode audits it.
+      const privateNotes = op.privateAppend != null ? patchBody(await s.privateNotes(c.tx, id), { append: op.privateAppend }) : op.privateNotes;
+      await s.patchNode(c, id, { ...op, body, privateNotes });
       return { op: op.op, id };
     }
     case 'delete_node': {
