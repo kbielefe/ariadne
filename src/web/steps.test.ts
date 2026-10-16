@@ -64,6 +64,17 @@ describe('applySteps', () => {
     expect(run([step('replace', [a]), step('replace', [b], 0, 0, false)])).toEqual(['Task A']);
   });
 
+  it('walks through tasks only, so people do not spread it to everyone else\'s work', () => {
+    const will = node('Will', { kind: 'person', status: null });
+    const theirs = node('Will\'s task');
+    const g = graph([...nodes, will, theirs], [...edges, edge(a2, 'involves', will), edge(will, 'working_on', theirs)]);
+    expect(run([step('replace', [a], 0, ALL)], g)).toEqual(['Task A', 'A1', 'A1a', 'A2', 'Resource R', 'Will']);
+    // From a person as the seed, the walk does go on.
+    expect(run([step('replace', [will], 0, ALL)], g)).toEqual(['Will', 'Will\'s task']);
+    // Tasks that use R: R's parents, but not on through them.
+    expect(run([step('replace', [r], ALL, 0)], g)).toEqual(['Task A', 'A1', 'Task B', 'B1', 'Resource R']);
+  });
+
   it('walks through nodes outside the base, but only returns the base', () => {
     const base = all(nodes.filter((n) => n !== a1));
     expect(run([step('replace', [a], 0, ALL)], graph(), base)).toEqual(['Task A', 'A1a', 'A2', 'Resource R']);

@@ -1,7 +1,7 @@
 // Filter steps for the graph view: an ordered list of set operations, each on a seed grown by
 // parents and children. Steps are rules, not results: they are re-applied to the graph on every
 // change, so new subtasks join "A + all children" and a task that becomes yours joins "yours tasks".
-import { type Direction, readiness, reachable, type TaskState, taskState } from '../shared/graph';
+import { type Direction, readiness, type TaskState, taskState } from '../shared/graph';
 import type { Edge, Node } from '../shared/model';
 
 export type StepOp = 'replace' | 'union' | 'intersect' | 'subtract';
@@ -46,9 +46,33 @@ export function seedIds(seed: Seed, g: StepGraph): string[] {
   return [...g.byId.values()].filter((n) => n.kind === 'task' && n.status === 'open' && want.has(taskState(readiness(n, g.edges, g.byId)))).map((n) => n.id);
 }
 
-function grow(out: Set<string>, g: StepGraph, start: string, direction: Direction, depth: number) {
+/**
+ * Add what `start` reaches going `direction`, up to `depth` levels (ALL for any). The walk passes through tasks
+ * only: a person, team, or resource it reaches is added but not walked on from (unless it is the seed), so
+ * "A + all children" stops at A's people instead of spreading through them to everyone else's work.
+ */
+function grow(out: Set<string>, g: StepGraph, start: string, direction: 'up' | 'down', depth: number) {
   if (depth === 0) return;
-  for (const id of reachable(g.walk, start, { direction, ...(depth > 0 ? { depth } : {}) }).keys()) out.add(id);
+  const next = new Map<string, string[]>();
+  for (const e of g.walk) {
+    const [from, to] = direction === 'down' ? [e.src, e.dst] : [e.dst, e.src];
+    const list = next.get(from);
+    if (list) list.push(to);
+    else next.set(from, [to]);
+  }
+  const seen = new Set([start]);
+  let frontier = [start];
+  for (let d = 1; (depth === ALL || d <= depth) && frontier.length; d++) {
+    const ahead: string[] = [];
+    for (const id of frontier)
+      for (const n of next.get(id) ?? [])
+        if (!seen.has(n)) {
+          seen.add(n);
+          out.add(n);
+          if (g.byId.get(n)?.kind === 'task') ahead.push(n);
+        }
+    frontier = ahead;
+  }
 }
 
 /** The nodes one step stands for: its seed plus the parents and children it reaches. */
