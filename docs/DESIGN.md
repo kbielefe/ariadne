@@ -129,13 +129,22 @@ steward daemon ──exec──► scripts/steward-backend-ariadne ──HTTP (/
 
 ## 5. Screens
 
-- **Graph** (the only screen): all nodes and edges with filters (kinds, hide closed) and **focus**: pick a node to see
-  what's reachable from it (down / up / both, with a depth). A side panel creates, edits, and deletes
-  nodes and edges.
-- **Search:** the pickers (focus, add edge) match titles first, then body text, showing the matching
+- **Graph** (the only screen): all nodes and edges with filters (kinds, hide closed) and **steps**. A side panel
+  creates, edits, and deletes nodes and edges.
+- **Selection:** click selects a node; ctrl/shift-click toggles one more; shift-drag box-selects. Dragging a
+  selected node moves the selection together. The details pane shows the node picked last.
+- **Steps:** an ordered list of set operations on what is shown: **Show** (start over), **Add**, **Keep only**,
+  **Hide**. Each starts from the selection (a snapshot of its ids) or a task state (ready, yours, blocked,
+  waiting, theirs), grown by up to N levels of parents and of children (or all). Parents and children are separate
+  walks over the shown edge kinds, so siblings never creep in. Steps are rules, not results: they are re-applied on
+  every graph change, so a new subtask joins "A + all children", and deleted seeds just drop out. Each step can be
+  turned off without removing it; back/forward walks through step changes; **Show all** clears them. Double-click
+  (or **Show tree**) is Show that node + all children. Steps are remembered across reloads; the old focus became
+  a first Show step. A small change of steps keeps nodes where they are; a new view is laid out and fitted.
+- **Find / New:** the top-bar Find selects a node, and a node you find or create that the steps would hide is
+  added back with an Add step (and its kind or closed status shown), so it never vanishes.
+- **Search:** the pickers (Find, add edge) match titles first, then body text, showing the matching
   line; decision lines are labelled, so typing "decision" lists them.
-- **Focus:** the focus task in the top bar is remembered across reloads. While focused, a **Show all** button on
-  the canvas returns to the full graph.
 - **Order:** a control in the left sidebar sets how side-by-side nodes are ordered in the layout: ready first,
   oldest first, newest first, recently updated, or title. Changing it lays the graph out again; it is remembered.
   dagre may still move a node with children to avoid edge crossings; leaves always follow the order.

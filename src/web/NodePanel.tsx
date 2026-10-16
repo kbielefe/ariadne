@@ -1,4 +1,4 @@
-import { Check, Copy, Crosshair, Lock, Pencil, Plus, X } from 'lucide-react';
+import { Check, Copy, EyeOff, ListTree, Lock, Pencil, Plus, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { ACTOR_KINDS, EDGE_RULES, type Edge, type EdgeKind, type Node, type NodeKind, type Op, ResourceType, USER_ID } from '../shared/model';
 import { api, type NodeDetail } from './api';
@@ -26,21 +26,22 @@ function useOps() {
 
 const KINDS: NodeKind[] = ['task', 'person', 'team', 'resource'];
 
-export function NewNodeForm({ onCreated }: { onCreated(id: string): void }) {
-  const { focus, byId } = useApp();
+/** `parent`: the task selected when New was pressed; a new task is needed by it unless unticked. */
+export function NewNodeForm({ parent, onCreated }: { parent: string | null; onCreated(id: string): void }) {
+  const { byId } = useApp();
   const [kind, setKind] = useState<NodeKind>('task');
   const [title, setTitle] = useState('');
-  const [underFocus, setUnderFocus] = useState(true);
+  const [underParent, setUnderParent] = useState(true);
   const { error, run } = useOps();
-  const focusNode = focus ? byId.get(focus) : undefined;
-  const link = kind === 'task' && focusNode?.kind === 'task' && underFocus;
+  const parentNode = parent ? byId.get(parent) : undefined;
+  const link = kind === 'task' && parentNode?.kind === 'task' && underParent;
   return (
     <form
       className="panel-body"
       onSubmit={async (e) => {
         e.preventDefault();
         if (!title.trim()) return;
-        const r = await run([{ op: 'create_node', ref: 'n', kind, title: title.trim() }, ...(link ? [{ op: 'create_edge' as const, src: focus!, kind: 'needs' as const, dst: '$n' }] : [])]);
+        const r = await run([{ op: 'create_node', ref: 'n', kind, title: title.trim() }, ...(link ? [{ op: 'create_edge' as const, src: parent!, kind: 'needs' as const, dst: '$n' }] : [])]);
         if (r) {
           setTitle('');
           onCreated(r.results[0]!.id);
@@ -56,9 +57,9 @@ export function NewNodeForm({ onCreated }: { onCreated(id: string): void }) {
         ))}
       </div>
       <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} placeholder={kind === 'task' ? 'What needs doing?' : 'Name'} aria-label="Title" />
-      {kind === 'task' && focusNode?.kind === 'task' && (
+      {kind === 'task' && parentNode?.kind === 'task' && (
         <label className="check">
-          <input type="checkbox" checked={underFocus} onChange={(e) => setUnderFocus(e.target.checked)} /> needed by “{focusNode.title}”
+          <input type="checkbox" checked={underParent} onChange={(e) => setUnderParent(e.target.checked)} /> needed by “{parentNode.title}”
         </label>
       )}
       <button className="btn primary" disabled={!title.trim()}>
@@ -71,8 +72,9 @@ export function NewNodeForm({ onCreated }: { onCreated(id: string): void }) {
 
 // ================================================================ view / edit
 
-export function NodePanel({ id, onSelect, onClose }: { id: string; onSelect(id: string | null): void; onClose(): void }) {
-  const { version, setFocus, focus, impact } = useApp();
+/** `selectionCount`: how many nodes are selected; this panel shows the last one picked. */
+export function NodePanel({ id, onSelect, onClose, selectionCount, onShowTree, onHide }: { id: string; onSelect(id: string | null): void; onClose(): void; selectionCount: number; onShowTree(): void; onHide(): void }) {
+  const { version, impact } = useApp();
   const [d, setD] = useState<NodeDetail | null>(null);
   const { error, run } = useOps();
   useEffect(() => {
@@ -109,11 +111,15 @@ export function NodePanel({ id, onSelect, onClose }: { id: string; onSelect(id: 
             impact {impact.get(id) ?? 0}
           </span>
         )}
-        <button className={`btn small ${focus === id ? 'on' : ''}`} onClick={() => setFocus(focus === id ? null : id)}>
-          <Crosshair size={14} /> {focus === id ? 'Focused' : 'Focus'}
+        <button className="btn small" title="Show only this and all its children (same as double-click)" onClick={onShowTree}>
+          <ListTree size={14} /> Show tree
+        </button>
+        <button className="btn small" title="Hide this node (a Hide step)" onClick={onHide}>
+          <EyeOff size={14} /> Hide
         </button>
         {id !== USER_ID && <DeleteNode detail={d} run={run} onDeleted={() => onSelect(null)} />}
       </div>
+      {selectionCount > 1 && <p className="muted small">{selectionCount} selected; showing the last one picked.</p>}
       {error && <p className="error">{error}</p>}
 
       <Section title="Description">

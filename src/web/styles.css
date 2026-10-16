@@ -133,7 +133,7 @@ code,
   font-weight: 700;
   letter-spacing: 0.02em;
 }
-.focus {
+.find {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -142,7 +142,7 @@ code,
   width: min(380px, 45vw);
   color: var(--muted);
 }
-.focus .picker {
+.find .picker {
   flex: 1;
 }
 .live {
@@ -248,12 +248,6 @@ code,
 .closed {
   text-decoration: line-through;
   color: var(--muted);
-}
-.focus-chip {
-  background: var(--accent-soft);
-  border-color: var(--accent);
-  cursor: default;
-  color: var(--fg);
 }
 .chips {
   display: flex;
@@ -407,6 +401,47 @@ code,
 }
 .filters fieldset:disabled {
   opacity: 0.5;
+}
+.reach-row,
+.step-ops,
+.step-history {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+.reach {
+  display: grid;
+  flex: 1;
+  min-width: 70px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.step-list {
+  list-style: none;
+  margin: 4px 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+}
+.step-list li {
+  display: flex;
+  gap: 4px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+.step-list li .check {
+  align-items: flex-start;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.step-list li.off span {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+.step-history .btn {
+  margin-left: auto;
 }
 .canvas-wrap {
   position: relative;
@@ -648,7 +683,7 @@ code,
     border-left: 0;
     border-top: 1px solid var(--line);
   }
-  .focus {
+  .find {
     width: auto;
     flex: 1;
   }

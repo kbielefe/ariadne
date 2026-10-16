@@ -1,8 +1,8 @@
 import cytoscape, { type Core as Cy, type ElementDefinition } from 'cytoscape';
 import fcose from 'cytoscape-fcose';
-import { ArrowDownUp, Crosshair, Expand, Maximize, Network, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Plus, RefreshCw } from 'lucide-react';
+import { ArrowDownUp, Eye, EyeOff, Maximize, Network, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Plus, RefreshCw } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { type Direction, readiness, reachable, taskState } from '../shared/graph';
+import { readiness, taskState } from '../shared/graph';
 import { EDGE_RULES, type EdgeKind, EdgeKind as EdgeKinds, type NodeKind, USER_ID } from '../shared/model';
 import { remember } from './api';
 import { useApp } from './App';
@@ -12,6 +12,8 @@ import { type Body, nudgeStep } from './nudge';
 import { NODE_SIZE, placeNew, type View, loadView, saveView } from './placement';
 import { DEFAULT_LAYOUT, isLayout, LAYOUTS, layered, type LayoutEdge, type LayoutName, type LayoutNode, radial } from './layouts';
 import { DEFAULT_SORT, isSort, SORTS, type Sort, sortNodes } from './order';
+import { ALL, applySteps, centre, shownSeeds, type StepGraph, stepsKey } from './steps';
+import { newStep, StepsPanel, withStep } from './StepsPanel';
 
 cytoscape.use(fcose);
 
@@ -24,13 +26,11 @@ interface Filters {
   knownEdges: EdgeKind[];
   showClosed: boolean;
   showImpact: boolean;
-  direction: Direction;
-  depth: number;
 }
 
 // Filters saved before knownEdges existed predate working_on.
 const LEGACY_EDGES = EdgeKinds.options.filter((k) => k !== 'working_on');
-const DEFAULT_FILTERS: Filters = { kinds: NODE_KINDS, edges: [...EdgeKinds.options], knownEdges: [...EdgeKinds.options], showClosed: false, showImpact: false, direction: 'down', depth: 0 };
+const DEFAULT_FILTERS: Filters = { kinds: NODE_KINDS, edges: [...EdgeKinds.options], knownEdges: [...EdgeKinds.options], showClosed: false, showImpact: false };
 
 function loadSort(): Sort {
   const s = remember.get('graphSort');
@@ -48,7 +48,8 @@ function loadBends(): boolean {
 
 function loadFilters(): Filters {
   try {
-    const saved = JSON.parse(remember.get('graphFilters') ?? '{}') as Partial<Filters>;
+    // direction and depth belonged to the old focus; they live on in its step (see App's loadSteps).
+    const { direction: _d, depth: _n, ...saved } = JSON.parse(remember.get('graphFilters') ?? '{}') as Partial<Filters> & { direction?: unknown; depth?: unknown };
     const f: Filters = { ...DEFAULT_FILTERS, ...saved };
     const known = saved.edges ? (saved.knownEdges ?? LEGACY_EDGES) : EdgeKinds.options;
     const edges = [...f.edges.filter((k) => EdgeKinds.options.includes(k)), ...EdgeKinds.options.filter((k) => !known.includes(k) && !f.edges.includes(k))];
@@ -58,10 +59,14 @@ function loadFilters(): Filters {
   }
 }
 
-export function GraphView({ selected, onSelect }: { selected: string | null; onSelect(id: string | null): void }) {
-  const { graph, byId, impact, focus, setFocus } = useApp();
+export function GraphView({ selection, onSelection }: { selection: string[]; onSelection(ids: string[]): void }) {
+  const { graph, byId, impact, steps, setSteps, reveal, revealing, doneRevealing } = useApp();
   const [f, setF] = useState<Filters>(loadFilters);
-  const [creating, setCreating] = useState(false);
+  // The New form, and the task it will be needed by (the selected task when you pressed New).
+  const [creating, setCreating] = useState<{ parent: string | null } | null>(null);
+  // The details pane shows the node selected last.
+  const selected = selection.at(-1) ?? null;
+  const onSelect = (id: string | null) => onSelection(id ? [id] : []);
   const [sort, setSortState] = useState<Sort>(loadSort);
   const setSort = (x: Sort) => {
     setSortState(x);
@@ -102,15 +107,14 @@ export function GraphView({ selected, onSelect }: { selected: string | null; onS
       return next;
     });
 
-  // What to draw: kind and status filters, then (with a focus) only what's reachable from it.
+  // What to draw: kind and status filters, then the steps. Both re-run on every graph change.
+  const edges = useMemo(() => graph.edges.filter((e) => f.edges.includes(e.kind)), [graph, f.edges]);
+  const g: StepGraph = useMemo(() => ({ walk: edges, edges: graph.edges, byId }), [edges, graph, byId]);
+  const base = useMemo(() => new Set(graph.nodes.filter((n) => f.kinds.includes(n.kind) && (f.showClosed || (n.status !== 'done' && n.status !== 'dropped'))).map((n) => n.id)), [graph, f.kinds, f.showClosed]);
+  const shown = useMemo(() => applySteps(base, steps, g), [base, steps, g]);
   const elements = useMemo(() => {
-    let ids = new Set(graph.nodes.filter((n) => f.kinds.includes(n.kind) && (f.showClosed || n.status !== 'done' && n.status !== 'dropped')).map((n) => n.id));
-    const edges = graph.edges.filter((e) => f.edges.includes(e.kind));
-    if (focus && byId.has(focus)) {
-      const r = reachable(edges, focus, { direction: f.direction, ...(f.depth ? { depth: f.depth } : {}) });
-      ids = new Set([...ids].filter((id) => r.has(id)));
-      ids.add(focus);
-    }
+    const ids = shown;
+    const seeds = shownSeeds(steps, g);
     const els: ElementDefinition[] = [];
     // Elements carry their place in the sort; the layout lays siblings out in that order.
     const order = new Map(sortNodes([...ids].map((id) => byId.get(id)!), sort, graph.edges, byId).map((n, i) => [n.id, i]));
@@ -124,7 +128,7 @@ export function GraphView({ selected, onSelect }: { selected: string | null; onS
         }
         if (!graph.edges.some((e) => e.kind === 'needs' && e.dst === id)) classes.push('root');
       }
-      if (id === focus) classes.push('focus');
+      if (seeds.has(id)) classes.push('seed');
       const label = n.title.length > 64 ? `${n.title.slice(0, 63)}…` : n.title;
       // The canvas draws this as a badge on the node's top-right corner.
       const badge = f.showImpact && n.kind === 'task' ? (impact.get(id) ?? 0) : undefined;
@@ -132,10 +136,24 @@ export function GraphView({ selected, onSelect }: { selected: string | null; onS
     }
     for (const e of edges) if (ids.has(e.src) && ids.has(e.dst)) els.push({ group: 'edges', data: { id: e.id, source: e.src, target: e.dst, label: e.kind === 'needs' ? '' : EDGE_RULES[e.kind].label, order: order.get(e.dst) }, classes: e.kind === 'waits_on' && e.dst === USER_ID ? `${e.kind} to-you` : e.kind });
     return els;
-  }, [graph, byId, impact, f, focus, sort]);
+  }, [graph, byId, impact, f.showImpact, shown, steps, g, edges, sort]);
 
   // Each view remembers its own arrangement.
-  const viewKey = [layout, sort, focus ?? '', focus ? `${f.direction}${f.depth}` : ''].join('|');
+  const viewKey = [layout, sort, stepsKey(steps)].join('|');
+  const radialCentre = centre(steps, g);
+
+  // Found or just created: once the node exists, make sure it's drawn.
+  useEffect(() => {
+    if (!revealing || !byId.has(revealing)) return;
+    doneRevealing();
+    if (shown.has(revealing)) return;
+    const n = byId.get(revealing)!;
+    const closed = n.status === 'done' || n.status === 'dropped';
+    if (!f.kinds.includes(n.kind) || (closed && !f.showClosed)) update({ kinds: f.kinds.includes(n.kind) ? f.kinds : [...f.kinds, n.kind], showClosed: f.showClosed || closed });
+    if (!applySteps(new Set([revealing]), steps, g).has(revealing)) setSteps([...steps, newStep('union', { type: 'nodes', ids: [revealing] })]);
+  }, [revealing, byId, shown]);
+
+  const showTree = (id: string) => setSteps(withStep(steps, newStep('replace', { type: 'nodes', ids: [id] }, { up: 0, down: ALL })));
 
   const counts = useMemo(() => ({ shown: elements.filter((e) => e.group === 'nodes').length, total: graph.nodes.length }), [elements, graph]);
 
@@ -165,24 +183,7 @@ export function GraphView({ selected, onSelect }: { selected: string | null; onS
             </label>
           ))}
         </fieldset>
-        <fieldset disabled={!focus}>
-          <legend>
-            <Crosshair size={12} /> From the focus
-          </legend>
-          <select value={f.direction} onChange={(e) => update({ direction: e.target.value as Direction })} aria-label="Direction">
-            <option value="down">what it needs, uses, involves</option>
-            <option value="up">what needs it</option>
-            <option value="both">both ways</option>
-          </select>
-          <select value={f.depth} onChange={(e) => update({ depth: Number(e.target.value) })} aria-label="Depth">
-            <option value={0}>any depth</option>
-            {[1, 2, 3, 4, 5].map((d) => (
-              <option key={d} value={d}>
-                {d} step{d > 1 ? 's' : ''}
-              </option>
-            ))}
-          </select>
-        </fieldset>
+        <StepsPanel selection={selection} />
         <fieldset>
           <legend>
             <Network size={12} /> Layout
@@ -212,11 +213,11 @@ export function GraphView({ selected, onSelect }: { selected: string | null; onS
           </select>
         </fieldset>
         <p className="muted small">
-          {counts.shown} of {counts.total} shown. Click to select, double-click to focus.
+          {counts.shown} of {counts.total} shown. Click to select; ctrl- or shift-click to add; shift-drag to box-select. Double-click shows a node and all its children.
         </p>
       </aside>
       <div className="canvas-wrap">
-        <Canvas elements={elements} viewKey={viewKey} arrange={arrangers[layout](focus)} bends={bends && layout === 'layered'} nudge={layout === 'force'} selected={selected} onSelect={onSelect} onFocus={setFocus} />
+        <Canvas elements={elements} viewKey={viewKey} arrange={arrangers[layout](radialCentre)} bends={bends && layout === 'layered'} nudge={layout === 'force'} selection={selection} onSelection={onSelection} onOpen={showTree} />
         <div className="canvas-tools">
           <button className="btn icon-btn" aria-label={panes.filters ? 'Hide filters' : 'Show filters'} aria-pressed={panes.filters} title={panes.filters ? 'Hide filters' : 'Show filters'} onClick={() => setPane({ filters: !panes.filters })}>
             {panes.filters ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}
@@ -224,17 +225,25 @@ export function GraphView({ selected, onSelect }: { selected: string | null; onS
           <button
             className="btn primary"
             onClick={() => {
+              setCreating({ parent: selected && byId.get(selected)?.kind === 'task' ? selected : null });
               onSelect(null);
-              setCreating(true);
               setPane({ details: true });
             }}
           >
             <Plus size={16} /> New
           </button>
-          {focus && (
-            <button className="btn on" title="Clear the focus and show the whole graph" onClick={() => setFocus(null)}>
-              <Expand size={16} /> Show all
-            </button>
+          {selection.length > 0 && (
+            <>
+              <button className="btn" title="Hide the selected nodes (a Hide step)" onClick={() => {
+                setSteps(withStep(steps, newStep('subtract', { type: 'nodes', ids: selection })));
+                onSelection([]);
+              }}>
+                <EyeOff size={16} /> Hide{selection.length > 1 ? ` ${selection.length}` : ''}
+              </button>
+              <button className="btn" title="Show only the selected nodes (starts new steps)" onClick={() => setSteps(withStep(steps, newStep('replace', { type: 'nodes', ids: selection })))}>
+                <Eye size={16} /> Only {selection.length > 1 ? 'these' : 'this'}
+              </button>
+            </>
           )}
         </div>
         {panes.filters && <ResizeHandle side="left" label="Resize filters" width={panes.filtersW} min={160} max={420} fallback={DEFAULT_PANES.filtersW} onChange={(filtersW) => setPane({ filtersW })} onDrag={setDragging} />}
@@ -248,6 +257,12 @@ export function GraphView({ selected, onSelect }: { selected: string | null; onS
           <NodePanel
             id={selected}
             onSelect={onSelect}
+            selectionCount={selection.length}
+            onShowTree={() => showTree(selected!)}
+            onHide={() => {
+              setSteps(withStep(steps, newStep('subtract', { type: 'nodes', ids: [selected!] })));
+              onSelect(null);
+            }}
             onClose={() => {
               onSelect(null);
               setPane({ details: false });
@@ -255,9 +270,11 @@ export function GraphView({ selected, onSelect }: { selected: string | null; onS
           />
         ) : creating || !graph.nodes.length ? (
           <NewNodeForm
+            parent={creating?.parent ?? null}
             onCreated={(id) => {
-              setCreating(false);
+              setCreating(null);
               onSelect(id);
+              reveal(id);
             }}
           />
         ) : (
@@ -370,7 +387,8 @@ function styles(): cytoscape.StylesheetJson {
     { selector: 'node.person', style: { shape: 'ellipse', width: NODE_SIZE.person.w, 'background-color': css('--person', '#eef2ff') } },
     { selector: 'node.team', style: { shape: 'octagon', width: NODE_SIZE.team.w, 'background-color': css('--team', '#fef3c7') } },
     { selector: 'node.resource', style: { shape: 'tag', width: NODE_SIZE.resource.w, 'background-color': css('--resource', '#f3f4f6') } },
-    { selector: 'node.focus', style: { 'border-color': accent, 'border-width': 4 } },
+    // Picked by hand in a step that shows it (what double-click shows, say).
+    { selector: 'node.seed', style: { 'border-color': accent, 'border-width': 4 } },
     { selector: 'node:selected', style: { 'overlay-color': accent, 'overlay-opacity': 0.15, 'overlay-padding': 6 } },
     {
       selector: 'edge',
@@ -411,14 +429,14 @@ function layoutInput(c: Cy): { nodes: LayoutNode[]; edges: LayoutEdge[] } {
 
 const FORCE_EDGE = NODE_SIZE.task.w;
 
-const arrangers: Record<LayoutName, (focus: string | null) => Arrange> = {
+const arrangers: Record<LayoutName, (centre: string | null) => Arrange> = {
   layered: () => (c) => {
     const { nodes, edges } = layoutInput(c);
     return layered(nodes, edges);
   },
-  radial: (focus) => async (c) => {
+  radial: (centre) => async (c) => {
     const { nodes, edges } = layoutInput(c);
-    return radial(nodes, edges, focus);
+    return radial(nodes, edges, centre);
   },
   // fcose moves the nodes itself; read back where they went.
   force: () => (c) =>
@@ -461,12 +479,12 @@ interface Nudging {
   raf: number;
 }
 
-function Canvas(p: { elements: ElementDefinition[]; viewKey: string; arrange: Arrange; bends: boolean; nudge: boolean; selected: string | null; onSelect(id: string | null): void; onFocus(id: string): void }) {
-  const { elements, viewKey, selected, bends } = p;
+function Canvas(p: { elements: ElementDefinition[]; viewKey: string; arrange: Arrange; bends: boolean; nudge: boolean; selection: string[]; onSelection(ids: string[]): void; onOpen(id: string): void }) {
+  const { elements, viewKey, selection, bends } = p;
   const box = useRef<HTMLDivElement>(null);
   const cy = useRef<Cy | null>(null);
-  const handlers = useRef({ onSelect: p.onSelect, onFocus: p.onFocus, arrange: p.arrange, bends: p.bends, nudge: p.nudge });
-  handlers.current = { onSelect: p.onSelect, onFocus: p.onFocus, arrange: p.arrange, bends: p.bends, nudge: p.nudge };
+  const handlers = useRef({ selection, onSelection: p.onSelection, onOpen: p.onOpen, arrange: p.arrange, bends: p.bends, nudge: p.nudge });
+  handlers.current = { selection, onSelection: p.onSelection, onOpen: p.onOpen, arrange: p.arrange, bends: p.bends, nudge: p.nudge };
   // The arrangement on screen; nodes keep these positions until the view changes or you re-arrange.
   const view = useRef<{ key: string; v: View } | null>(null);
   const runs = useRef(0);
@@ -475,12 +493,22 @@ function Canvas(p: { elements: ElementDefinition[]; viewKey: string; arrange: Ar
   const badges = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const c = cytoscape({ container: box.current!, style: styles(), wheelSensitivity: 1.5, minZoom: 0.15, maxZoom: 2.5, boxSelectionEnabled: false });
-    c.on('tap', 'node', (e) => handlers.current.onSelect(e.target.id()));
-    c.on('tap', (e) => {
-      if (e.target === c) handlers.current.onSelect(null);
+    // Cytoscape does the selecting: click selects one, ctrl/shift/cmd-click toggles, shift-drag box-selects.
+    const c = cytoscape({ container: box.current!, style: styles(), wheelSensitivity: 1.5, minZoom: 0.15, maxZoom: 2.5, boxSelectionEnabled: true });
+    // Pass its node selection up once per gesture, in the order picked (so the last one picked shows in the details).
+    let syncing = false;
+    c.on('select unselect', 'node', () => {
+      if (syncing) return;
+      syncing = true;
+      queueMicrotask(() => {
+        syncing = false;
+        const now = new Set(c.nodes(':selected').map((n) => n.id()));
+        const prev = handlers.current.selection;
+        if (now.size === prev.length && prev.every((id) => now.has(id))) return;
+        handlers.current.onSelection([...prev.filter((id) => now.has(id)), ...[...now].filter((id) => !prev.includes(id))]);
+      });
     });
-    c.on('dbltap', 'node', (e) => handlers.current.onFocus(e.target.id()));
+    c.on('dbltap', 'node', (e) => handlers.current.onOpen(e.target.id()));
     // A node you drag stays where you put it. Its edges forget their bends, which no longer fit.
     let nudging: Nudging | null = null;
     // Remember where the nudged nodes are now (on release, and again once they settle).
@@ -521,7 +549,8 @@ function Canvas(p: { elements: ElementDefinition[]; viewKey: string; arrange: Ar
         bent.forEach((x: cytoscape.EdgeSingular) => void cur!.v.bends!.delete(x.id()));
         bent.removeStyle(BEND_STYLE);
       }
-      if (!handlers.current.nudge || nudging?.held === id) return;
+      // Dragging several selected nodes moves them together; nudging follows only a single node.
+      if (!handlers.current.nudge || nudging?.held === id || c.nodes(':grabbed').length > 1) return;
       finish();
       const bodies = new Map(c.nodes().map((n) => [n.id(), { ...n.position(), ...NODE_SIZE[kindOf(n)], vx: 0, vy: 0 }]));
       const edges = c.edges().map((x) => ({ src: x.data('source') as string, dst: x.data('target') as string }));
@@ -554,6 +583,7 @@ function Canvas(p: { elements: ElementDefinition[]; viewKey: string; arrange: Ar
   useEffect(() => {
     const c = cy.current!;
     const want = new Map(elements.map((e) => [e.data.id!, e]));
+    const before = new Set(c.nodes().map((n) => n.id()));
     c.batch(() => {
       c.elements().forEach((el) => {
         if (!want.has(el.id())) el.remove();
@@ -597,11 +627,19 @@ function Canvas(p: { elements: ElementDefinition[]; viewKey: string; arrange: Ar
       placeRest(cur);
       return;
     }
-    // A new view: use what it remembers if that covers most of it, otherwise lay it out.
+    // A new view: use what it remembers if that covers most of it; else, after a small change to the steps
+    // (most of what was drawn stays, and most of what is drawn was there), keep nodes where they are on screen;
+    // otherwise lay it out.
+    const covers = (v: View) => ids.filter((e) => v.pos.has(e.data.id!)).length * 2 >= ids.length;
     const saved = forced ? null : loadView(viewKey);
-    if (saved && ids.filter((e) => saved.pos.has(e.data.id!)).length * 2 >= ids.length) {
-      view.current = { key: viewKey, v: saved };
+    const stayed = ids.filter((e) => before.has(e.data.id!)).length;
+    const small = stayed * 2 >= Math.max(before.size, ids.length);
+    const kept = !forced && !saved && cur && small ? { flow: cur.v.flow, pos: new Map(cur.v.pos), ...(cur.v.bends ? { bends: new Map(cur.v.bends) } : {}) } : null;
+    const reuse = saved && covers(saved) ? saved : kept;
+    if (reuse) {
+      view.current = { key: viewKey, v: reuse };
       placeRest(view.current);
+      if (kept) saveView(viewKey, kept);
       fitView(c);
       return;
     }
@@ -617,11 +655,16 @@ function Canvas(p: { elements: ElementDefinition[]; viewKey: string; arrange: Ar
 
   useEffect(() => drawBends(cy.current!, view.current?.v, bends), [bends]);
 
+  // Selection from elsewhere (a node chip, Find, New): select just those nodes.
   useEffect(() => {
     const c = cy.current!;
-    c.$(':selected').unselect();
-    if (selected) c.getElementById(selected).select();
-  }, [selected, elements]);
+    const want = new Set(selection);
+    c.batch(() =>
+      c.nodes().forEach((n) => {
+        if (want.has(n.id()) !== n.selected()) (want.has(n.id()) ? n.select() : n.unselect());
+      }),
+    );
+  }, [selection, elements]);
 
   return (
     <>
