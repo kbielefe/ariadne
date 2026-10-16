@@ -131,8 +131,7 @@ steward daemon ──exec──► scripts/steward-backend-ariadne ──HTTP (/
 
 - **Graph** (the only screen): all nodes and edges with filters (kinds, hide closed) and **steps**. A side panel
   creates, edits, and deletes nodes and edges.
-- **Selection:** click selects a node; ctrl/shift-click toggles one more; dragging on the background box-selects
-  (shift-drag adds). Middle-button drag pans; the wheel zooms. Dragging a
+- **Selection:** click selects a node; ctrl/shift-click toggles one more; shift-drag box-selects. Dragging a
   selected node moves the selection together. The details pane shows the node picked last.
 - **Steps:** an ordered list of set operations on what is shown: **Show** (start over), **Add**, **Keep only**,
   **Hide**. Each starts from the selection (a snapshot of its ids) or a task state (ready, yours, blocked,

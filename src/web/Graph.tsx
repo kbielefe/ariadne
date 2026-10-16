@@ -213,7 +213,7 @@ export function GraphView({ selection, onSelection }: { selection: string[]; onS
           </select>
         </fieldset>
         <p className="muted small">
-          {counts.shown} of {counts.total} shown. Click to select; ctrl- or shift-click to add; drag to box-select (shift adds). Middle-drag to pan, scroll to zoom. Double-click shows a node and all its children.
+          {counts.shown} of {counts.total} shown. Click to select; ctrl- or shift-click to add; shift-drag to box-select. Double-click shows a node and all its children.
         </p>
       </aside>
       <div className="canvas-wrap">
@@ -493,35 +493,8 @@ function Canvas(p: { elements: ElementDefinition[]; viewKey: string; arrange: Ar
   const badges = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    // Cytoscape does the selecting: click selects one, ctrl/shift/cmd-click toggles, dragging on the background
-    // box-selects (with shift, adds to the selection). Its own drag-to-pan is off: the middle button pans (below).
-    const c = cytoscape({ container: box.current!, style: styles(), wheelSensitivity: 1.5, minZoom: 0.15, maxZoom: 2.5, boxSelectionEnabled: true, userPanningEnabled: false });
-    // Middle-button drag pans. Caught on the window before cytoscape sees it: it would take the release for a
-    // left click on the background and clear the selection.
-    let panFrom: { x: number; y: number } | null = null;
-    const panDown = (e: MouseEvent) => {
-      if (e.button !== 1 || !box.current?.contains(e.target as Element)) return;
-      e.preventDefault(); // no autoscroll
-      e.stopImmediatePropagation();
-      panFrom = { x: e.clientX, y: e.clientY };
-      box.current.classList.add('panning');
-    };
-    const panMove = (e: MouseEvent) => {
-      if (!panFrom) return;
-      e.stopImmediatePropagation();
-      c.panBy({ x: e.clientX - panFrom.x, y: e.clientY - panFrom.y });
-      panFrom = { x: e.clientX, y: e.clientY };
-    };
-    const panUp = (e: MouseEvent) => {
-      if (!panFrom || e.button !== 1) return;
-      e.preventDefault(); // no paste on Linux
-      e.stopImmediatePropagation();
-      panFrom = null;
-      box.current?.classList.remove('panning');
-    };
-    window.addEventListener('mousedown', panDown, true);
-    window.addEventListener('mousemove', panMove, true);
-    window.addEventListener('mouseup', panUp, true);
+    // Cytoscape does the selecting: click selects one, ctrl/shift/cmd-click toggles, shift-drag box-selects.
+    const c = cytoscape({ container: box.current!, style: styles(), wheelSensitivity: 1.5, minZoom: 0.15, maxZoom: 2.5, boxSelectionEnabled: true });
     // Pass its node selection up once per gesture, in the order picked (so the last one picked shows in the details).
     let syncing = false;
     c.on('select unselect', 'node', () => {
@@ -600,9 +573,6 @@ function Canvas(p: { elements: ElementDefinition[]; viewKey: string; arrange: Ar
     ro.observe(box.current!);
     return () => {
       finish();
-      window.removeEventListener('mousedown', panDown, true);
-      window.removeEventListener('mousemove', panMove, true);
-      window.removeEventListener('mouseup', panUp, true);
       ro.disconnect();
       mq.removeEventListener('change', restyle);
       c.destroy();

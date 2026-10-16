@@ -467,9 +467,6 @@ code,
   position: absolute;
   inset: 0;
 }
-.canvas.panning {
-  cursor: grabbing;
-}
 .badges {
   position: absolute;
   inset: 0;
