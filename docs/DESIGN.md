@@ -136,7 +136,9 @@ steward daemon ──exec──► scripts/steward-backend-ariadne ──HTTP (/
 - **Steps:** an ordered list of set operations on what is shown: **Show** (start over), **Add**, **Keep only**,
   **Hide**. Each starts from the selection (a snapshot of its ids) or a task state (ready, yours, blocked,
   waiting, theirs), grown by up to N levels of parents and of children (or all). Parents and children are separate
-  walks over the shown edge kinds, so siblings never creep in. Steps are rules, not results: they are re-applied on
+  walks, so siblings never creep in. Each step's **Follow** setting picks the edge kinds the walks follow and the node
+  kinds they walk on through (default: every edge kind, through tasks only, so a tree stops at its people rather
+  than spreading to their other work). Walks don't depend on which edges are drawn. Steps are rules, not results: they are re-applied on
   every graph change, so a new subtask joins "A + all children", and deleted seeds just drop out. Each step can be
   turned off without removing it; back/forward walks through step changes; **Show all** clears them. Double-click
   (or **Show tree**) is Show that node + all children. Steps are remembered across reloads; the old focus became

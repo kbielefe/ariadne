@@ -109,7 +109,7 @@ export function GraphView({ selection, onSelection }: { selection: string[]; onS
 
   // What to draw: kind and status filters, then the steps. Both re-run on every graph change.
   const edges = useMemo(() => graph.edges.filter((e) => f.edges.includes(e.kind)), [graph, f.edges]);
-  const g: StepGraph = useMemo(() => ({ walk: edges, edges: graph.edges, byId }), [edges, graph, byId]);
+  const g: StepGraph = useMemo(() => ({ edges: graph.edges, byId }), [graph, byId]);
   const base = useMemo(() => new Set(graph.nodes.filter((n) => f.kinds.includes(n.kind) && (f.showClosed || (n.status !== 'done' && n.status !== 'dropped'))).map((n) => n.id)), [graph, f.kinds, f.showClosed]);
   const shown = useMemo(() => applySteps(base, steps, g), [base, steps, g]);
   const elements = useMemo(() => {

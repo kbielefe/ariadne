@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { type Edge, type EdgeKind, type Node, USER_ID } from '../shared/model';
-import { ALL, applySteps, back, centre, focusStep, forward, parseSteps, record, type Step, type StepGraph, stepLabel, stepsKey } from './steps';
+import { ALL, applySteps, DEFAULT_FOLLOW, back, centre, focusStep, forward, parseSteps, record, type Step, type StepGraph, stepLabel, stepsKey } from './steps';
 
 let seq = 0;
 const node = (title: string, p: Partial<Node> = {}): Node => ({
@@ -30,7 +30,7 @@ const r = node('Resource R', { kind: 'resource', status: null });
 const nodes = [you, a, a1, a1a, a2, b, b1, r];
 const edges = [edge(a, 'needs', a1), edge(a, 'needs', a2), edge(a1, 'needs', a1a), edge(b, 'needs', b1), edge(a1, 'uses', r), edge(b1, 'uses', r)];
 
-const graph = (ns: Node[] = nodes, es: Edge[] = edges): StepGraph => ({ walk: es, edges: es, byId: new Map(ns.map((n) => [n.id, n])) });
+const graph = (ns: Node[] = nodes, es: Edge[] = edges): StepGraph => ({ edges: es, byId: new Map(ns.map((n) => [n.id, n])) });
 const all = (ns: Node[] = nodes) => new Set(ns.map((n) => n.id));
 const titles = (ids: Set<string>, ns: Node[] = nodes) => ns.filter((n) => ids.has(n.id)).map((n) => n.title);
 const run = (steps: Step[], g = graph(), base = new Set(g.byId.keys())) => titles(applySteps(base, steps, g), [...g.byId.values()]);
@@ -80,9 +80,17 @@ describe('applySteps', () => {
     expect(run([step('replace', [a], 0, ALL)], graph(), base)).toEqual(['Task A', 'A1a', 'A2', 'Resource R']);
   });
 
-  it('follows only the walk edges', () => {
-    const g = { ...graph(), walk: edges.filter((e) => e.kind === 'needs') };
-    expect(run([step('replace', [a], 0, ALL)], g)).toEqual(['Task A', 'A1', 'A1a', 'A2']);
+  it('follows only the edge kinds and walks through only the node kinds it is told to', () => {
+    const viaNeeds = { ...step('replace', [a], 0, ALL), follow: { edges: ['needs' as const], through: ['task' as const] } };
+    expect(run([viaNeeds])).toEqual(['Task A', 'A1', 'A1a', 'A2']);
+    // Through resources too: R's other users come along.
+    const viaR = { ...step('replace', [a1], 0, ALL), follow: { edges: ['needs' as const, 'uses' as const], through: ['task' as const, 'resource' as const] } };
+    expect(run([viaR])).toEqual(['A1', 'A1a', 'Resource R']);
+    const upViaR = { ...viaR, reach: { up: ALL, down: 0 }, seed: { type: 'nodes' as const, ids: [r.id] } };
+    expect(run([upViaR])).toEqual(['Task A', 'A1', 'Task B', 'B1', 'Resource R']);
+    // Walking through nothing stops one level out.
+    const through0 = { ...step('replace', [a], 0, ALL), follow: { edges: ['needs' as const], through: [] } };
+    expect(run([through0])).toEqual(['Task A', 'A1', 'A2']);
   });
 
   it('re-applies to a changed graph: new subtasks join, deleted seeds drop out', () => {
@@ -108,6 +116,8 @@ describe('stepLabel', () => {
     expect(stepLabel(step('replace', [a1], 2, 1), byId)).toBe('Show A1 + 2 levels of parents + 1 level of children');
     expect(stepLabel(step('subtract', [a, b]), byId)).toBe('Hide 2 nodes');
     expect(stepLabel({ ...step('union', []), seed: { type: 'state', states: ['yours'] } }, byId)).toBe('Add yours tasks');
+    expect(stepLabel({ ...step('replace', [a], 0, ALL), follow: { edges: ['needs', 'uses'], through: ['task', 'person'] } }, byId)).toBe('Show Task A + all children via needs, uses · through task, person');
+    expect(stepLabel({ ...step('replace', [a], 0, ALL), follow: DEFAULT_FOLLOW }, byId)).toBe('Show Task A + all children');
   });
   it('says when seeds are gone', () => {
     const gone = node('Gone');
@@ -131,6 +141,8 @@ describe('parseSteps and focusStep', () => {
   it('keeps valid steps and drops the rest', () => {
     const good = step('replace', [a], 0, ALL);
     expect(parseSteps(JSON.stringify([good, { ...good, op: 'nope' }, { ...good, seed: { type: 'state', states: ['bogus'] } }, 7]))).toEqual([good]);
+    expect(parseSteps(JSON.stringify([{ ...good, follow: { edges: ['needs'], through: ['task'] } }]))).toHaveLength(1);
+    expect(parseSteps(JSON.stringify([{ ...good, follow: { edges: ['bogus'], through: ['task'] } }]))).toEqual([]);
     expect(parseSteps('not json')).toEqual([]);
     expect(parseSteps(null)).toEqual([]);
   });

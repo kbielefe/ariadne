@@ -440,6 +440,22 @@ code,
   color: var(--muted);
   text-decoration: line-through;
 }
+.follow summary {
+  cursor: pointer;
+  font-size: 13px;
+}
+.follow-cols {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 6px;
+  margin: 4px 0;
+  font-size: 13px;
+}
+.follow-cols > div {
+  display: grid;
+  gap: 2px;
+  align-content: start;
+}
 .step-history .btn {
   margin-left: auto;
 }
