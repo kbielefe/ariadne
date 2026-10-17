@@ -107,6 +107,19 @@ describe('applySteps', () => {
     const ready: Step = { ...yours, seed: { type: 'state', states: ['ready'] } };
     expect(run([ready])).toEqual(['A1a', 'A2', 'B1']);
   });
+
+  it('a root seed is every task nothing needs, read afresh', () => {
+    const roots: Step = { id: 'r', op: 'replace', seed: { type: 'roots' }, reach: { up: 0, down: 0 }, on: true };
+    expect(run([roots])).toEqual(['Task A', 'Task B']);
+    expect(run([{ ...roots, reach: { up: 0, down: ALL } }])).toEqual(['Task A', 'A1', 'A1a', 'A2', 'Task B', 'B1', 'Resource R']);
+    const c = node('Task C');
+    expect(run([roots], graph([...nodes, c]))).toEqual(['Task A', 'Task B', 'Task C']);
+    // A parent arrives, so A is no longer a root. A done root still seeds the walk; the base hides it.
+    const parent = node('Parent', { status: 'done' });
+    const base = all(nodes);
+    expect(run([roots], graph([...nodes, parent], [...edges, edge(parent, 'needs', a)]), base)).toEqual(['Task B']);
+    expect(run([{ ...roots, reach: { up: 0, down: 1 } }], graph([...nodes, parent], [...edges, edge(parent, 'needs', a)]), base)).toEqual(['Task A', 'Task B', 'B1']);
+  });
 });
 
 describe('stepLabel', () => {
@@ -116,6 +129,7 @@ describe('stepLabel', () => {
     expect(stepLabel(step('replace', [a1], 2, 1), byId)).toBe('Show A1 + 2 levels of parents + 1 level of children');
     expect(stepLabel(step('subtract', [a, b]), byId)).toBe('Hide 2 nodes');
     expect(stepLabel({ ...step('union', []), seed: { type: 'state', states: ['yours'] } }, byId)).toBe('Add yours tasks');
+    expect(stepLabel({ ...step('replace', [], 0, ALL), seed: { type: 'roots' } }, byId)).toBe('Show root nodes + all children');
     expect(stepLabel({ ...step('replace', [a], 0, ALL), follow: { edges: ['needs', 'uses'], through: ['task', 'person'] } }, byId)).toBe('Show Task A + all children via needs, uses · through task, person');
     expect(stepLabel({ ...step('replace', [a], 0, ALL), follow: DEFAULT_FOLLOW }, byId)).toBe('Show Task A + all children');
   });
@@ -134,6 +148,9 @@ describe('centre and stepsKey', () => {
   it('keys only the steps that are on, not their ids', () => {
     expect(stepsKey([step('replace', [a])])).toBe(stepsKey([step('replace', [a]), step('union', [b], 0, 0, false)]));
     expect(stepsKey([step('replace', [a])])).not.toBe(stepsKey([step('replace', [a], 0, 1)]));
+    const roots: Step = { id: 'r', op: 'replace', seed: { type: 'roots' }, reach: { up: 0, down: 0 }, on: true };
+    expect(stepsKey([roots])).toBe(stepsKey([{ ...roots, id: 'other' }]));
+    expect(stepsKey([roots])).not.toBe(stepsKey([{ ...roots, reach: { up: 0, down: 1 } }]));
   });
 });
 
@@ -142,6 +159,7 @@ describe('parseSteps and focusStep', () => {
     const good = step('replace', [a], 0, ALL);
     expect(parseSteps(JSON.stringify([good, { ...good, op: 'nope' }, { ...good, seed: { type: 'state', states: ['bogus'] } }, 7]))).toEqual([good]);
     expect(parseSteps(JSON.stringify([{ ...good, follow: { edges: ['needs'], through: ['task'] } }]))).toHaveLength(1);
+    expect(parseSteps(JSON.stringify([{ ...good, seed: { type: 'roots' } }]))).toHaveLength(1);
     expect(parseSteps(JSON.stringify([{ ...good, follow: { edges: ['bogus'], through: ['task'] } }]))).toEqual([]);
     expect(parseSteps('not json')).toEqual([]);
     expect(parseSteps(null)).toEqual([]);

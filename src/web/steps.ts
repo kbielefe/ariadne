@@ -1,7 +1,8 @@
 // Filter steps for the graph view: an ordered list of set operations, each on a seed grown by
 // parents and children. Steps are rules, not results: they are re-applied to the graph on every
-// change, so new subtasks join "A + all children" and a task that becomes yours joins "yours tasks".
-import { type Direction, readiness, type TaskState, taskState } from '../shared/graph';
+// change, so new subtasks join "A + all children", a task that becomes yours joins "yours tasks",
+// and a task that nothing needs joins "root nodes".
+import { type Direction, isRoot, readiness, type TaskState, taskState } from '../shared/graph';
 import { EDGE_RULES, type Edge, type EdgeKind, EdgeKind as EdgeKinds, type Node, type NodeKind } from '../shared/model';
 
 export type StepOp = 'replace' | 'union' | 'intersect' | 'subtract';
@@ -13,7 +14,9 @@ export type Seed =
   /** Nodes picked by hand: a snapshot of the selection when the step was made. */
   | { type: 'nodes'; ids: string[] }
   /** Open tasks in these states, read afresh each time. */
-  | { type: 'state'; states: TaskState[] };
+  | { type: 'state'; states: TaskState[] }
+  /** Tasks nothing needs (no incoming needs edge), read afresh each time. People and resources are not in that graph. */
+  | { type: 'roots' };
 
 /** How far to grow the seed: steps up (what needs it) and down (what it needs, uses, involves). 0 none, ALL any depth. */
 export interface Reach {
@@ -50,6 +53,7 @@ export interface StepGraph {
 /** The seed's nodes that still exist. */
 export function seedIds(seed: Seed, g: StepGraph): string[] {
   if (seed.type === 'nodes') return seed.ids.filter((id) => g.byId.has(id));
+  if (seed.type === 'roots') return [...g.byId.values()].filter((n) => n.kind === 'task' && isRoot(g.edges, n.id)).map((n) => n.id);
   const want = new Set(seed.states);
   return [...g.byId.values()].filter((n) => n.kind === 'task' && n.status === 'open' && want.has(taskState(readiness(n, g.edges, g.byId)))).map((n) => n.id);
 }
@@ -135,7 +139,8 @@ const reachWords = (n: number, what: string) => (n === 0 ? '' : n === ALL ? `all
 /** Plain words for the step list, e.g. "Keep only PDP: gateway + all children". */
 export function stepLabel(step: Step, byId: ReadonlyMap<string, Node>): string {
   let seed: string;
-  if (step.seed.type === 'state') seed = `${step.seed.states.join(', ')} tasks`;
+  if (step.seed.type === 'roots') seed = 'root nodes';
+  else if (step.seed.type === 'state') seed = `${step.seed.states.join(', ')} tasks`;
   else {
     const ids = step.seed.ids;
     const left = ids.filter((id) => byId.has(id));
@@ -161,7 +166,8 @@ function followWords(f: Follow | undefined): string {
 
 /** A stable key for the steps that are on (for remembering a layout per view). */
 export function stepsKey(steps: readonly Step[]): string {
-  return JSON.stringify(steps.filter((s) => s.on).map((s) => [s.op, s.seed.type === 'nodes' ? s.seed.ids : s.seed.states, s.reach.up, s.reach.down, s.follow ?? null]));
+  const seedKey = (s: Step) => (s.seed.type === 'nodes' ? s.seed.ids : s.seed.type === 'state' ? s.seed.states : 'roots');
+  return JSON.stringify(steps.filter((s) => s.on).map((s) => [s.op, seedKey(s), s.reach.up, s.reach.down, s.follow ?? null]));
 }
 
 const isReach = (n: unknown) => typeof n === 'number' && Number.isInteger(n) && n >= ALL;
@@ -173,6 +179,7 @@ function isStep(x: unknown): x is Step {
   if (s.follow !== undefined && !(Array.isArray(s.follow?.edges) && s.follow.edges.every((k) => EdgeKinds.options.includes(k)) && Array.isArray(s.follow.through) && s.follow.through.every((k) => NODE_KINDS.includes(k)))) return false;
   if (s.seed?.type === 'nodes') return Array.isArray(s.seed.ids) && s.seed.ids.every((id) => typeof id === 'string');
   if (s.seed?.type === 'state') return Array.isArray(s.seed.states) && s.seed.states.every((t) => TASK_STATES.includes(t));
+  if (s.seed?.type === 'roots') return true;
   return false;
 }
 

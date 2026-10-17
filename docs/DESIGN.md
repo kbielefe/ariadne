@@ -140,8 +140,9 @@ steward daemon ──exec──► scripts/steward-backend-ariadne ──HTTP (/
 - **Selection:** click selects a node; ctrl/shift-click toggles one more; shift-drag box-selects. Dragging a
   selected node moves the selection together. The details pane shows the node picked last.
 - **Steps:** an ordered list of set operations on what is shown: **Show** (start over), **Add**, **Keep only**,
-  **Hide**. Each starts from the selection (a snapshot of its ids) or a task state (ready, yours, blocked,
-  waiting, theirs), grown by up to N levels of parents and of children (or all). Parents and children are separate
+  **Hide**. Each starts from the selection (a snapshot of its ids), the root nodes (tasks with no incoming
+  needs edge, read afresh), or a task state (ready, yours, blocked, waiting, theirs), grown by up to N levels of
+  parents and of children (or all). Parents and children are separate
   walks, so siblings never creep in. Each step's **Follow** setting picks the edge kinds the walks follow and the node
   kinds they walk on through (default: every edge kind, through tasks only, so a tree stops at its people rather
   than spreading to their other work). Walks don't depend on which edges are drawn. Steps are rules, not results: they are re-applied on

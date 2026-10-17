@@ -65,13 +65,13 @@ function ReachSelect(p: { label: string; value: number; onChange(n: number): voi
   );
 }
 
-/** Build filter steps from the selection or a task state, and list, toggle, and remove them. */
+/** Build filter steps from the selection, the root nodes, or a task state, and list, toggle, and remove them. */
 export function StepsPanel({ selection }: { selection: string[] }) {
   const { steps, setSteps, canBack, canForward, back, forward, byId } = useApp();
-  const [seedKind, setSeedKind] = useState<'selection' | TaskState>('selection');
+  const [seedKind, setSeedKind] = useState<'selection' | 'roots' | TaskState>('selection');
   const [reach, setReach] = useState<Reach>({ up: 0, down: 0 });
   const [follow, setFollow] = useState<Follow>(DEFAULT_FOLLOW);
-  const seed: Seed = seedKind === 'selection' ? { type: 'nodes', ids: selection } : { type: 'state', states: [seedKind] };
+  const seed: Seed = seedKind === 'selection' ? { type: 'nodes', ids: selection } : seedKind === 'roots' ? { type: 'roots' } : { type: 'state', states: [seedKind] };
   const empty = seedKind === 'selection' && !selection.length;
   return (
     <fieldset className="steps">
@@ -80,6 +80,7 @@ export function StepsPanel({ selection }: { selection: string[] }) {
       </legend>
       <select value={seedKind} onChange={(e) => setSeedKind(e.target.value as typeof seedKind)} aria-label="Start from">
         <option value="selection">the selection ({selection.length})</option>
+        <option value="roots">root nodes</option>
         {TASK_STATES.map((s) => (
           <option key={s} value={s}>
             {s} tasks
