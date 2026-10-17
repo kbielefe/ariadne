@@ -41,6 +41,51 @@ export function reachable(edges: readonly Edge[], start: string, o: ReachOptions
   return seen;
 }
 
+/**
+ * Edges of `kind` that a longer path of the same kind already covers: the transitive reduction.
+ * `u → v` is a skip when some direct successor of `u` can reach `v`, so the path has length at least 2
+ * (A → D drops when the only route is A → B → C → D). One pass on the original graph. On a DAG, dropping
+ * them all at once keeps reachability. `needs`, `reports_to`, and `member_of` are kept acyclic on write.
+ */
+export function skipEdges(edges: readonly Edge[], kind: EdgeKind = 'needs'): Edge[] {
+  const adj = new Map<string, string[]>();
+  const ofKind: Edge[] = [];
+  for (const e of edges) {
+    if (e.kind !== kind) continue;
+    ofKind.push(e);
+    const list = adj.get(e.src);
+    if (list) list.push(e.dst);
+    else adj.set(e.src, [e.dst]);
+  }
+  // Nodes reachable from `start` in one or more steps.
+  const desc = new Map<string, Set<string>>();
+  const descendants = (start: string): Set<string> => {
+    const hit = desc.get(start);
+    if (hit) return hit;
+    const seen = new Set<string>();
+    const stack = [...(adj.get(start) ?? [])];
+    while (stack.length) {
+      const y = stack.pop()!;
+      if (seen.has(y)) continue;
+      seen.add(y);
+      for (const z of adj.get(y) ?? []) if (!seen.has(z)) stack.push(z);
+    }
+    desc.set(start, seen);
+    return seen;
+  };
+  // Nodes each src reaches in two or more steps, through one of its direct successors.
+  const via = new Map<string, Set<string>>();
+  const reachableVia = (src: string): Set<string> => {
+    const hit = via.get(src);
+    if (hit) return hit;
+    const set = new Set<string>();
+    for (const w of adj.get(src) ?? []) for (const d of descendants(w)) set.add(d);
+    via.set(src, set);
+    return set;
+  };
+  return ofKind.filter((e) => reachableVia(e.src).has(e.dst));
+}
+
 /** Tasks that (transitively) need this task, nearest first. Their context is inherited. */
 export function ancestorTasks(edges: readonly Edge[], taskId: string): string[] {
   const r = reachable(edges, taskId, { direction: 'up', kinds: ['needs'] });

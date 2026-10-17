@@ -131,6 +131,12 @@ steward daemon ──exec──► scripts/steward-backend-ariadne ──HTTP (/
 
 - **Graph** (the only screen): all nodes and edges with filters (kinds, hide closed) and **steps**. A side panel
   creates, edits, and deletes nodes and edges.
+- **Skip links:** a direct `needs` edge is a skip when a longer `needs` path already connects the same tasks
+  (A needs B needs C, so A needs C adds nothing). That is the transitive reduction of `needs`. The filters sidebar
+  lists them and removes every one in a single `delete_edge` batch, which Undo covers. MCP `remove_skip_links`
+  lists them, and with `apply: true` deletes that same batch. Readiness uses direct edges, so a task becomes ready
+  once its remaining direct needs are closed. Inherited context, impact, roots, steward sharing, and branch scope
+  walk every path, so they stay the same.
 - **Selection:** click selects a node; ctrl/shift-click toggles one more; shift-drag box-selects. Dragging a
   selected node moves the selection together. The details pane shows the node picked last.
 - **Steps:** an ordered list of set operations on what is shown: **Show** (start over), **Add**, **Keep only**,

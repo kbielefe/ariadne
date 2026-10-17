@@ -836,6 +836,14 @@ code,
 .confirm-delete .warn {
   color: var(--danger);
 }
+.skip-links ul {
+  margin: 0 0 6px;
+  padding-left: 1.1em;
+  font-size: 12px;
+}
+.skip-links li {
+  margin: 0 0 2px;
+}
 
 /* ---------------------------------------------------------------- toast (Deleted. Undo) */
 .toast {

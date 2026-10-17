@@ -7,7 +7,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { CallToolRequestSchema, type CallToolResult, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
-import { type Direction, reachable, readiness, taskState } from '../shared/graph';
+import { type Direction, reachable, readiness, skipEdges, taskState } from '../shared/graph';
 import { EdgeKind, NodeKind, Op, TaskStatus } from '../shared/model';
 import { ContextBuilder, type TaskContext } from './context';
 import type { Core } from './core';
@@ -27,7 +27,9 @@ before A: check it against the real dependency (which code ships first), not the
 leaf is about one PR or commit-sized change, one decision, one conversation with a specific person, or one verification
 run ("integration suite passes on branch X"). An umbrella task's body says "Done when the kept subtasks are done."
 Chains 3-6 levels deep are normal. When two parents need the same thing, link both to one subtask rather than
-duplicating it. search before creating a task; update or close a stale one instead of adding a near-duplicate.
+duplicating it. A direct needs edge is a skip when a longer needs path already connects the same tasks
+(A needs B needs C, so A needs C adds nothing). remove_skip_links lists those; apply: true deletes them in one
+changeset, which undo restores. search before creating a task; update or close a stale one instead of adding a near-duplicate.
 
 Waiting: when work is blocked outside the user's control (a PR review, a CI build, a merge, a release, someone's
 answer), add a leaf "Waiting on <what>: <subject>" (e.g. "Waiting on review: <repo> PR #48", "Waiting on CI: <repo>
@@ -166,6 +168,31 @@ const tools: Tool[] = [
         nodes: [...ids].map((id) => byId.get(id)!).filter(Boolean).map((n) => ({ id: n.id, kind: n.kind, title: n.title, status: n.status, ...(n.status === 'open' ? { state: taskState(readiness(n, g.edges, byId)) } : {}) })),
         edges: g.edges.filter((e) => ids.has(e.src) && ids.has(e.dst)).map((e) => ({ id: e.id, src: e.src, kind: e.kind, dst: e.dst, ...(e.note ? { note: e.note } : {}) })),
       };
+    },
+  },
+  {
+    name: 'remove_skip_links',
+    description:
+      'Transitive reduction of needs edges. A direct needs edge is a skip when a longer needs path already connects the same tasks (A needs B needs C, so A needs C adds nothing; this includes longer paths, such as A needs D when A needs B needs C needs D). Without apply, lists those edges and writes nothing. With apply: true, deletes every one in one changeset and returns that id, which undo restores. Reachability is unchanged. Readiness uses direct edges, so a task becomes ready once its remaining direct needs are closed.',
+    input: z.object({
+      apply: z.boolean().optional().describe('Delete the skip links. Default false: list them only.'),
+    }),
+    run: async (core, a: { apply?: boolean }) => {
+      const g = await core.graph();
+      const byId = new Map(g.nodes.map((n) => [n.id, n]));
+      const edges = skipEdges(g.edges).map((e) => ({
+        id: e.id,
+        src: e.src,
+        dst: e.dst,
+        srcTitle: byId.get(e.src)?.title ?? '',
+        dstTitle: byId.get(e.dst)?.title ?? '',
+        ...(e.note ? { note: e.note } : {}),
+      }));
+      if (!a.apply) return { edges };
+      if (!edges.length) return { edges, removed: 0 };
+      const w = who(null, 'mcp');
+      const out = await core.apply(w, edges.map((e) => ({ op: 'delete_edge' as const, id: e.id })));
+      return { edges, removed: out.results.length, changeset: w.changeset };
     },
   },
   {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { impacts, readiness, taskState } from './graph';
+import { impacts, reachable, readiness, skipEdges, taskState } from './graph';
 import { type Edge, type Node, type TaskStatus, USER_ID } from './model';
 
 const needs = (src: string, dst: string): Edge => ({ id: `${src}>${dst}`, src, kind: 'needs', dst, note: '', createdAt: '' });
@@ -29,6 +29,45 @@ describe('impacts', () => {
 
   it('has no entry for tasks without needs edges (callers treat them as 0)', () => {
     expect(impacts([], new Map()).size).toBe(0);
+  });
+});
+
+describe('skipEdges', () => {
+  const ids = (es: Edge[]) => es.map((e) => e.id).sort();
+  const covers = (edges: Edge[], removed: string[]) => {
+    const gone = skipEdges(edges);
+    expect(ids(gone)).toEqual([...removed].sort());
+    const keep = edges.filter((e) => !gone.includes(e));
+    for (const e of gone) expect(reachable(keep, e.src, { kinds: ['needs'] }).has(e.dst)).toBe(true);
+    expect(skipEdges(keep)).toEqual([]);
+  };
+
+  it('drops A → C when A → B → C already connects them', () => {
+    covers([needs('a', 'b'), needs('b', 'c'), needs('a', 'c')], ['a>c']);
+  });
+
+  it('drops a shortcut along a path longer than two', () => {
+    covers([needs('a', 'b'), needs('b', 'c'), needs('c', 'd'), needs('a', 'd')], ['a>d']);
+  });
+
+  it('drops every shortcut on a chain and leaves the chain', () => {
+    covers([needs('a', 'b'), needs('b', 'c'), needs('c', 'd'), needs('a', 'c'), needs('a', 'd'), needs('b', 'd')], ['a>c', 'a>d', 'b>d']);
+  });
+
+  it('drops the chord of a diamond and keeps both branches', () => {
+    covers([needs('a', 'b'), needs('a', 'c'), needs('b', 'd'), needs('c', 'd'), needs('a', 'd')], ['a>d']);
+  });
+
+  it('keeps a single edge and two parents of one child', () => {
+    expect(skipEdges([needs('a', 'b')])).toEqual([]);
+    expect(skipEdges([needs('a', 'c'), needs('b', 'c')])).toEqual([]);
+  });
+
+  it('does not treat another edge kind as a needs path', () => {
+    const involves: Edge = { ...needs('a', 'c'), id: 'involve', kind: 'involves' };
+    const edges = [needs('a', 'b'), needs('b', 'c'), needs('a', 'c'), involves];
+    expect(ids(skipEdges(edges))).toEqual(['a>c']);
+    expect(skipEdges(edges, 'involves')).toEqual([]);
   });
 });
 

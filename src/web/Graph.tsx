@@ -2,9 +2,9 @@ import cytoscape, { type Core as Cy, type ElementDefinition } from 'cytoscape';
 import fcose from 'cytoscape-fcose';
 import { ArrowDownUp, Eye, EyeOff, Maximize, Network, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Plus, RefreshCw } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { readiness, taskState } from '../shared/graph';
+import { readiness, skipEdges, taskState } from '../shared/graph';
 import { EDGE_RULES, type EdgeKind, EdgeKind as EdgeKinds, type NodeKind, USER_ID } from '../shared/model';
-import { remember } from './api';
+import { api, remember } from './api';
 import { useApp } from './App';
 import { KindIcon } from './bits';
 import { NewNodeForm, NodePanel } from './NodePanel';
@@ -57,6 +57,92 @@ function loadFilters(): Filters {
   } catch {
     return DEFAULT_FILTERS;
   }
+}
+
+const PREVIEW = 8;
+
+/** needs edges a longer needs path already covers. Removing them is one batch, so Undo restores them all. */
+function SkipLinks() {
+  const { graph, byId, notify } = useApp();
+  const [asking, setAsking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const skips = useMemo(() => skipEdges(graph.edges), [graph.edges]);
+  const title = (id: string) => byId.get(id)?.title ?? '(deleted)';
+  const n = skips.length;
+  const noun = n === 1 ? 'skip link' : 'skip links';
+
+  if (!n)
+    return (
+      <fieldset>
+        <legend>Skip links</legend>
+        <p className="muted small">No skip links</p>
+      </fieldset>
+    );
+
+  const remove = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const done = await api.ops(skips.map((e) => ({ op: 'delete_edge' as const, id: e.id })));
+      notify(`Removed ${n} ${noun}.`, done.changeset);
+      setAsking(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!asking)
+    return (
+      <fieldset>
+        <legend>Skip links</legend>
+        <button className="btn small" onClick={() => setAsking(true)}>
+          Remove {n} {noun}
+        </button>
+      </fieldset>
+    );
+
+  const shown = skips.slice(0, PREVIEW);
+  const rest = n - shown.length;
+  return (
+    <fieldset>
+      <legend>Skip links</legend>
+      <div className="confirm-delete skip-links" role="alertdialog" aria-label={`Remove ${n} ${noun}?`}>
+        <p>
+          Remove <strong>{n}</strong> {noun}?
+        </p>
+        <p className="muted small">A direct needs link is a skip when a longer needs path already connects those tasks. The longer path still connects them.</p>
+        <ul>
+          {shown.map((e) => (
+            <li key={e.id}>
+              {title(e.src)} → {title(e.dst)}
+              {e.note ? <span className="muted"> — {e.note}</span> : null}
+            </li>
+          ))}
+        </ul>
+        {rest > 0 && <p className="muted small">and {rest} more, removed with these.</p>}
+        <p className="muted small">You can undo it right after.</p>
+        {error && <p className="error">{error}</p>}
+        <div className="row">
+          <button className="btn small danger" autoFocus disabled={busy} onClick={() => void remove()}>
+            Remove
+          </button>
+          <button
+            className="btn small"
+            disabled={busy}
+            onClick={() => {
+              setAsking(false);
+              setError(null);
+            }}
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </fieldset>
+  );
 }
 
 export function GraphView({ selection, onSelection }: { selection: string[]; onSelection(ids: string[]): void }) {
@@ -183,6 +269,7 @@ export function GraphView({ selection, onSelection }: { selection: string[]; onS
             </label>
           ))}
         </fieldset>
+        <SkipLinks />
         <StepsPanel selection={selection} />
         <fieldset>
           <legend>

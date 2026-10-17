@@ -46,7 +46,7 @@ describe('MCP', () => {
   it('lets Claude Code build the graph, look at it, and undo from the history', async () => {
     const client = await mcp();
     const { tools } = await client.listTools();
-    expect(tools.map((t) => t.name).sort()).toEqual(['apply_ops', 'get_node', 'graph', 'history', 'search', 'undo']);
+    expect(tools.map((t) => t.name).sort()).toEqual(['apply_ops', 'get_node', 'graph', 'history', 'remove_skip_links', 'search', 'undo']);
 
     const r = await client.callTool({
       name: 'apply_ops',
@@ -134,6 +134,37 @@ describe('MCP', () => {
     expect(b.context.resources[0]!.item).toMatchObject({ name: 'PDP first tag' });
     expect(b.context.resources[0]!.item).not.toHaveProperty('about');
     expect(JSON.stringify(b)).not.toMatch(/A long parent body|About the branch/);
+    await client.close();
+  });
+
+  it('lists needs skip links, and apply deletes them in one undoable changeset', async () => {
+    const made = await core.ops(who(USER_ID, 'ui'), [
+      { op: 'create_node', ref: 'a', kind: 'task', title: 'Ship' },
+      { op: 'create_node', ref: 'b', kind: 'task', title: 'Build' },
+      { op: 'create_node', ref: 'c', kind: 'task', title: 'Test' },
+      { op: 'create_edge', src: '$a', kind: 'needs', dst: '$b' },
+      { op: 'create_edge', src: '$b', kind: 'needs', dst: '$c' },
+      { op: 'create_edge', src: '$a', kind: 'needs', dst: '$c', note: 'also directly' },
+    ]);
+    const id = (ref: string) => made.find((x) => x.ref === ref)!.id;
+    const skip = (await core.graph()).edges.find((e) => e.note === 'also directly')!;
+    const client = await mcp();
+
+    const dry = await call<{ edges: { id: string; src: string; dst: string; srcTitle: string; dstTitle: string; note?: string }[] }>(client, 'remove_skip_links', {});
+    expect(dry.edges).toEqual([{ id: skip.id, src: id('a'), dst: id('c'), srcTitle: 'Ship', dstTitle: 'Test', note: 'also directly' }]);
+    expect((await core.graph()).edges).toHaveLength(3);
+
+    const applied = await call<{ edges: unknown[]; removed: number; changeset: string }>(client, 'remove_skip_links', { apply: true });
+    expect(applied.removed).toBe(1);
+    expect(applied.changeset).toMatch(/^[0-9a-f-]{36}$/);
+    const left = (await core.graph()).edges;
+    expect(left.map((e) => `${e.src}>${e.dst}`).sort()).toEqual([`${id('a')}>${id('b')}`, `${id('b')}>${id('c')}`].sort());
+
+    const again = await call<{ edges: unknown[]; removed: number; changeset?: string }>(client, 'remove_skip_links', { apply: true });
+    expect(again).toEqual({ edges: [], removed: 0 });
+
+    await call(client, 'undo', { changeset: applied.changeset });
+    expect((await core.graph()).edges.find((e) => e.id === skip.id)?.note).toBe('also directly');
     await client.close();
   });
 });
