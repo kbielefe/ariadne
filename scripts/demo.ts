@@ -5,9 +5,10 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
 const base = process.env.ARIADNE_URL ?? 'http://127.0.0.1:3100';
+const headers = process.env.ARIADNE_TOKEN ? { authorization: `Bearer ${process.env.ARIADNE_TOKEN}` } : undefined;
 
 const client = new Client({ name: 'demo', version: '0' });
-await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`)));
+await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`), headers ? { requestInit: { headers } } : undefined));
 async function call<T = Record<string, unknown>>(name: string, args: Record<string, unknown>): Promise<T> {
   const r = await client.callTool({ name, arguments: args });
   if (r.isError) throw new Error(`${name}: ${JSON.stringify(r.content)}`);

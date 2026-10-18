@@ -19,6 +19,7 @@ export class ApiError extends Error {}
 async function call<T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<T> {
   const res = await fetch(path, {
     method,
+    credentials: 'same-origin',
     headers: body === undefined ? {} : { 'content-type': 'application/json' },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
@@ -28,6 +29,8 @@ async function call<T>(method: 'GET' | 'POST', path: string, body?: unknown): Pr
 }
 
 export const api = {
+  auth: () => call<{ required: boolean; ok: boolean }>('GET', '/api/auth'),
+  unlock: (token: string) => call<{ required: boolean; ok: boolean }>('POST', '/api/auth', { token }),
   graph: () => call<GraphData>('GET', '/api/graph'),
   node: (id: string) => call<NodeDetail>('GET', `/api/nodes/${id}`),
   ops: (ops: Op[]) => call<{ results: { op: string; id: string; ref?: string }[]; changeset: string; nowReady?: { id: string; title: string }[] }>('POST', '/api/ops', { ops }),
