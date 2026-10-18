@@ -1,4 +1,5 @@
-# Ariadne server (web UI + API + MCP) on http://127.0.0.1:3100. No auth: loopback only.
+# Ariadne server (web UI + API + MCP) on http://127.0.0.1:3100.
+# Remote access: cloudflared + Cloudflare Access (docs/CLOUDFLARE.md).
 # Image is built by hand (needs the VPN): podman build -t localhost/ariadne2:0.3.0 .
 [Unit]
 Description=Ariadne server
@@ -10,7 +11,8 @@ ContainerName=ariadne
 Image=localhost/ariadne2:0.3.0
 Pull=never
 Environment=ARIADNE_LISTEN_HOST=0.0.0.0 ARIADNE_LISTEN_PORT=3100
-Environment=ARIADNE_ALLOWED_HOSTS=127.0.0.1:3100,localhost:3100
+Environment=ARIADNE_ALLOWED_HOSTS=127.0.0.1:3100,localhost:3100,ariadne.bielefeldt.dev
+Environment=ARIADNE_TRUST_PROXY=1
 Environment=LOG_LEVEL=info
 Secret=ariadne-database-url,type=env,target=DATABASE_URL
 # Map you to the image's node user.

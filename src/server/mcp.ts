@@ -1,5 +1,5 @@
-// Ariadne's MCP server (/mcp, localhost only, no token). The user keeps the graph with Claude Code
-// in an interactive session: it looks things up and applies changes here.
+// Ariadne's MCP server (/mcp). Remote access is gated at the edge by Cloudflare Access Service Auth
+// (docs/CLOUDFLARE.md). The user keeps the graph with Claude Code or Cursor over MCP.
 //
 // Stateless Streamable HTTP: a new server + transport per request, plain JSON responses.
 import type { IncomingMessage, ServerResponse } from 'node:http';

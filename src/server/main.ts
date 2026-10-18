@@ -24,7 +24,7 @@ async function main() {
   if (!databaseUrl) throw new Error('Set DATABASE_URL');
   const host = env.ARIADNE_LISTEN_HOST ?? '127.0.0.1';
   const port = Number(env.ARIADNE_LISTEN_PORT ?? 3100);
-  const allowedHosts = (env.ARIADNE_ALLOWED_HOSTS ?? `127.0.0.1:${port},localhost:${port}`).split(',').map((h) => h.trim());
+  const allowedHosts = (env.ARIADNE_ALLOWED_HOSTS ?? `127.0.0.1:${port},localhost:${port}`).split(',').map((h) => h.trim()).filter(Boolean);
 
   const db = createPool(databaseUrl);
   const applied = await migrate(db, env.ARIADNE_MIGRATIONS_DIR ?? resolve(import.meta.dirname, 'migrations'));
@@ -34,7 +34,7 @@ async function main() {
   const hub = new Hub();
   const core = new Core(db, hub);
 
-  const app = Fastify({ logger: { level: env.LOG_LEVEL ?? 'info' }, bodyLimit: 2 * 1024 * 1024 });
+  const app = Fastify({ logger: { level: env.LOG_LEVEL ?? 'info' }, bodyLimit: 2 * 1024 * 1024, trustProxy: env.ARIADNE_TRUST_PROXY === '1' });
   registerApi(app, core, { allowedHosts });
   const webDir = resolve(env.ARIADNE_WEB_DIR ?? 'dist/web');
   if (existsSync(webDir)) {

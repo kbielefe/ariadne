@@ -1,0 +1,26 @@
+# Cloudflare Tunnel sidecar for the laptop quadlet set (docs/CLOUDFLARE.md).
+# podman secret create --replace ariadne-tunnel-token - <<< "$CLOUDFLARE_TUNNEL_TOKEN"
+# Public hostname in the Zero Trust dashboard should target http://ariadne:3100
+# (this unit joins ariadne-frontend; the app container is named ariadne).
+[Unit]
+Description=Ariadne Cloudflare Tunnel
+Requires=ariadne.service
+After=ariadne.service
+
+[Container]
+ContainerName=ariadne-cloudflared
+Image=docker.io/cloudflare/cloudflared:2025.8.1
+# Image ENTRYPOINT is already `cloudflared --no-autoupdate`.
+Exec=tunnel run
+Network=ariadne-frontend.network
+Secret=ariadne-tunnel-token,type=env,target=TUNNEL_TOKEN
+ReadOnly=true
+Tmpfs=/tmp
+NoNewPrivileges=true
+DropCapability=ALL
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

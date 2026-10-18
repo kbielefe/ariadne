@@ -269,6 +269,23 @@ describe('web API', () => {
     expect(after.at(-1)).toMatchObject({ who: 'Claude (MCP)', via: 'mcp', line: 'updated task "Mine!": title' });
   });
 
+  it('allows https Origins for tunnel hostnames listed in ARIADNE_ALLOWED_HOSTS', async () => {
+    await app.close();
+    ({ db, core } = await freshCore());
+    app = Fastify();
+    const port = 39000 + Math.floor(Math.random() * 1000);
+    registerApi(app, core, { allowedHosts: [`127.0.0.1:${port}`, 'ariadne.bielefeldt.dev'] });
+    await app.listen({ host: '127.0.0.1', port });
+    base = `http://127.0.0.1:${port}`;
+    const httpsOrigin = await app.inject({
+      method: 'POST',
+      url: '/api/ops',
+      headers: { host: 'ariadne.bielefeldt.dev', origin: 'https://ariadne.bielefeldt.dev', 'content-type': 'application/json' },
+      payload: { ops: [{ op: 'create_node', kind: 'task', title: 'From tunnel UI' }] },
+    });
+    expect(httpsOrigin.statusCode).toBe(200);
+  });
+
   it('lets you edit private notes in the UI, only with a reason, and keeps the reason in the history', async () => {
     const made = (await (await post('/api/ops', { ops: [{ op: 'create_node', kind: 'person', title: 'Dana' }] })).json()) as { results: { id: string }[] };
     const id = made.results[0]!.id;

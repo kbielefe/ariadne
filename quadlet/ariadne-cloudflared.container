@@ -1,0 +1,25 @@
+# Cloudflare Tunnel sidecar: publishes ariadne.bielefeldt.dev to the app on the frontend network.
+# Needs CLOUDFLARE_TUNNEL_TOKEN in %h/source/ariadne/.env (see docs/CLOUDFLARE.md).
+[Unit]
+Description=Ariadne Cloudflare Tunnel
+Requires=ariadne-app.service ariadne-frontend-network.service
+After=ariadne-app.service ariadne-frontend-network.service
+
+[Container]
+ContainerName=ariadne-cloudflared
+Image=docker.io/cloudflare/cloudflared:2025.8.1
+# Image ENTRYPOINT is already `cloudflared --no-autoupdate`.
+Exec=tunnel run
+Network=ariadne-frontend.network
+EnvironmentFile=%t/ariadne-cloudflared.env
+ReadOnly=true
+Tmpfs=/tmp
+NoNewPrivileges=true
+DropCapability=ALL
+
+[Service]
+ExecStartPre=/bin/sh %h/source/ariadne/quadlet/render-env.sh cloudflared %t/ariadne-cloudflared.env
+Restart=on-failure
+
+[Install]
+WantedBy=default.target

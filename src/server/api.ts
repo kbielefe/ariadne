@@ -1,9 +1,11 @@
-// HTTP for the web UI, /mcp (Claude Code sessions), and /api/steward (the steward daemon). All localhost only, with no
-// authentication.
+// HTTP for the web UI, /mcp (Claude Code / Cursor), and /api/steward (the steward daemon).
+// Auth at the edge when remote: Cloudflare Access (Service Auth on /mcp, IdP on the UI). See docs/CLOUDFLARE.md.
+// Localhost installs rely on the Host allowlist and a loopback-bound publish port.
 // UI edits apply directly and are audited.
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { USER_ID } from '../shared/model';
+import { originAllowed } from './auth';
 import { ContextBuilder, describeChange } from './context';
 import type { Core } from './core';
 import { handleMcp } from './mcp';
@@ -21,7 +23,7 @@ export function registerApi(app: FastifyInstance, core: Core, o: ApiOptions) {
     if (req.url.startsWith('/health')) return;
     if (!o.allowedHosts.includes(req.headers.host ?? '')) return reply.code(421).send({ error: 'Host not allowed' });
     const origin = req.headers.origin;
-    if (origin && req.method !== 'GET' && !o.allowedHosts.some((h) => origin === `http://${h}`)) return reply.code(403).send({ error: 'Cross-origin request refused' });
+    if (origin && req.method !== 'GET' && !originAllowed(origin, o.allowedHosts)) return reply.code(403).send({ error: 'Cross-origin request refused' });
   });
 
   app.setErrorHandler((err, _req, reply) => {
@@ -91,7 +93,7 @@ export function registerApi(app: FastifyInstance, core: Core, o: ApiOptions) {
     }
   });
 
-  // ---- MCP: no token; the Host/Origin guard above keeps it to localhost.
+  // ---- MCP: Streamable HTTP. Remote access is gated by Cloudflare Access Service Auth (docs/CLOUDFLARE.md).
   app.post('/mcp', async (req, reply) => {
     reply.hijack();
     await handleMcp(core, req.raw, reply.raw, req.body);
