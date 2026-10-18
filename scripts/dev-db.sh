@@ -8,7 +8,7 @@ PORT=${ARIADNE_DEV_DB_PORT:-55433}
 if ! podman container exists "$NAME"; then
   podman run -d --name "$NAME" -p "127.0.0.1:${PORT}:5432" \
     -e POSTGRES_USER=ariadne -e POSTGRES_PASSWORD=ariadne-dev -e POSTGRES_DB=ariadne_test \
-    --tmpfs /var/lib/postgresql/data artifactory.adtran.com/docker/postgres:17.6-alpine >/dev/null
+    --tmpfs /var/lib/postgresql/data docker.io/library/postgres:17.6-alpine >/dev/null
 elif [ "$(podman inspect -f '{{.State.Running}}' "$NAME")" != "true" ]; then
   podman start "$NAME" >/dev/null
 fi

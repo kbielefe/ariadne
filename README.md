@@ -17,7 +17,7 @@ edits. Every change is audited and can be undone. The design and its reasons are
    cp .env.example .env        # set POSTGRES_PASSWORD (openssl rand -hex 24)
    ```
 
-2. Start it (the first build needs the VPN for npm), then open <http://127.0.0.1:3100>:
+2. Start it (the first build needs network for npm and base images), then open <http://127.0.0.1:3100>:
 
    ```sh
    podman compose up -d
@@ -63,7 +63,7 @@ A smaller set (e.g. for the work laptop): a hand-built image and podman secrets 
 They reuse the Compose data volume, so stop Compose first (`podman compose down`).
 
 ```sh
-podman build -t localhost/ariadne2:0.3.0 .   # needs the VPN
+podman build -t localhost/ariadne2:0.3.0 .   # needs network for npm / base images
 scripts/install-quadlet.sh                    # units + secrets from .env, then (re)starts
 ```
 

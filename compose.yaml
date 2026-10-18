@@ -40,7 +40,7 @@ services:
     cap_drop: [ALL]
 
   postgres:
-    image: artifactory.adtran.com/docker/postgres:17.6-alpine@sha256:747d5ed1fdeeb124b880fbe3d7c6557d2c4064ae41d6b6297d417882effce4be
+    image: docker.io/library/postgres:17.6-alpine@sha256:747d5ed1fdeeb124b880fbe3d7c6557d2c4064ae41d6b6297d417882effce4be
     restart: unless-stopped
     environment:
       POSTGRES_USER: ariadne

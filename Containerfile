@@ -1,8 +1,10 @@
-# Ariadne image: the server (web UI + API + MCP). Needs the Adtran VPN for the npm registry.
-ARG NODE_IMAGE=artifactory.adtran.com/docker/node:24-alpine@sha256:333f6b3eca25980d5682c26207665b93c9417786b21760b2764d5821d9704c8a
+# Ariadne image: the server (web UI + API + MCP).
+# Base images are Docker Hub names so work laptops can proxy them via Artifactory
+# and home machines can pull directly. Override NPM_REGISTRY if you need a mirror.
+ARG NODE_IMAGE=docker.io/library/node:24-alpine@sha256:44fce696f38ba8c987c4db89954051000bbd05ffd8d8659ba15ed4a8602e937f
 
 FROM ${NODE_IMAGE} AS builder
-ARG NPM_REGISTRY=https://artifactory.adtran.com:443/artifactory/api/npm/npm/
+ARG NPM_REGISTRY=https://registry.npmjs.org/
 ARG PNPM_VERSION=10.34.5
 ENV npm_config_registry=${NPM_REGISTRY} CI=true
 RUN npm install -g "pnpm@${PNPM_VERSION}"
