@@ -1,6 +1,7 @@
 # Ariadne: local, single-user stack for rootless Podman Compose.
 #   podman compose up -d        Open http://127.0.0.1:3100
-# Without ARIADNE_TOKEN: loopback only. For cloudflared, set the token and public Host (see README).
+# Remote access uses the cloudflared quadlet + Cloudflare Access (docs/CLOUDFLARE.md),
+# not Compose. Keep the published port on loopback.
 name: ariadne2
 
 x-podman:
@@ -19,9 +20,8 @@ services:
       DATABASE_URL: postgres://ariadne:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/ariadne
       ARIADNE_LISTEN_HOST: 0.0.0.0
       ARIADNE_LISTEN_PORT: "3100"
-      ARIADNE_ALLOWED_HOSTS: ${ARIADNE_ALLOWED_HOSTS:-127.0.0.1:${ARIADNE_PORT:-3100},localhost:${ARIADNE_PORT:-3100}}
-      ARIADNE_TOKEN: ${ARIADNE_TOKEN:-}
-      ARIADNE_TRUST_PROXY: ${ARIADNE_TRUST_PROXY:-0}
+      ARIADNE_ALLOWED_HOSTS: ${ARIADNE_ALLOWED_HOSTS:-127.0.0.1:${ARIADNE_PORT:-3100},localhost:${ARIADNE_PORT:-3100},ariadne.bielefeldt.dev}
+      ARIADNE_TRUST_PROXY: ${ARIADNE_TRUST_PROXY:-1}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     # Map you to the image's node user.
     userns_mode: "keep-id:uid=1000,gid=1000"

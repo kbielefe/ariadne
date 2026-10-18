@@ -66,37 +66,6 @@ body {
   color: var(--fg);
   font: 15px/1.5 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
 }
-.auth-gate {
-  min-height: 100%;
-  display: grid;
-  place-items: center;
-  padding: 24px;
-}
-.auth-card {
-  width: min(420px, 100%);
-  display: grid;
-  gap: 12px;
-  padding: 28px 24px;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow);
-}
-.auth-card h1 {
-  margin: 0;
-  font-size: 1.4rem;
-}
-.auth-card label {
-  display: grid;
-  gap: 6px;
-  font-size: 0.9rem;
-  color: var(--muted);
-}
-.auth-error {
-  margin: 0;
-  color: var(--danger);
-  font-size: 0.9rem;
-}
 button,
 input,
 select,

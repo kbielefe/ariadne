@@ -1,7 +1,7 @@
 #!/bin/sh
 # Turn %h/source/ariadne/.env into a podman --env-file. systemd does not expand
 # ${VAR} in Environment=.
-# Usage: render-env.sh app|postgres DEST
+# Usage: render-env.sh app|postgres|cloudflared DEST
 set -eu
 
 mode=${1:?mode}
@@ -10,9 +10,9 @@ envfile=${ARIADNE_ENV_FILE:-${HOME}/source/ariadne/.env}
 
 POSTGRES_PASSWORD=
 LOG_LEVEL=
-ARIADNE_TOKEN=
 ARIADNE_ALLOWED_HOSTS=
 ARIADNE_TRUST_PROXY=
+CLOUDFLARE_TUNNEL_TOKEN=
 
 if [ ! -f "$envfile" ]; then
   echo "missing $envfile" >&2
@@ -32,15 +32,15 @@ while IFS= read -r line || [ -n "$line" ]; do
   case $key in
     POSTGRES_PASSWORD) POSTGRES_PASSWORD=$val ;;
     LOG_LEVEL) LOG_LEVEL=$val ;;
-    ARIADNE_TOKEN) ARIADNE_TOKEN=$val ;;
     ARIADNE_ALLOWED_HOSTS) ARIADNE_ALLOWED_HOSTS=$val ;;
     ARIADNE_TRUST_PROXY) ARIADNE_TRUST_PROXY=$val ;;
+    CLOUDFLARE_TUNNEL_TOKEN) CLOUDFLARE_TUNNEL_TOKEN=$val ;;
   esac
 done < "$envfile"
 
 : "${LOG_LEVEL:=info}"
-: "${ARIADNE_ALLOWED_HOSTS:=127.0.0.1:3100,localhost:3100}"
-: "${ARIADNE_TRUST_PROXY:=0}"
+: "${ARIADNE_ALLOWED_HOSTS:=127.0.0.1:3100,localhost:3100,ariadne.bielefeldt.dev}"
+: "${ARIADNE_TRUST_PROXY:=1}"
 
 umask 077
 tmp=${dest}.tmp
@@ -57,9 +57,6 @@ case $mode in
       printf 'ARIADNE_ALLOWED_HOSTS=%s\n' "$ARIADNE_ALLOWED_HOSTS"
       printf 'ARIADNE_TRUST_PROXY=%s\n' "$ARIADNE_TRUST_PROXY"
       printf 'LOG_LEVEL=%s\n' "$LOG_LEVEL"
-      if [ -n "$ARIADNE_TOKEN" ]; then
-        printf 'ARIADNE_TOKEN=%s\n' "$ARIADNE_TOKEN"
-      fi
     } > "$tmp"
     ;;
   postgres)
@@ -68,6 +65,13 @@ case $mode in
       exit 1
     fi
     printf 'POSTGRES_PASSWORD=%s\n' "$POSTGRES_PASSWORD" > "$tmp"
+    ;;
+  cloudflared)
+    if [ -z "$CLOUDFLARE_TUNNEL_TOKEN" ]; then
+      echo "CLOUDFLARE_TUNNEL_TOKEN is unset in $envfile (docs/CLOUDFLARE.md)" >&2
+      exit 1
+    fi
+    printf 'TUNNEL_TOKEN=%s\n' "$CLOUDFLARE_TUNNEL_TOKEN" > "$tmp"
     ;;
   *)
     echo "unknown mode: $mode" >&2

@@ -4,8 +4,8 @@
 # with one JSON object on stdin and reads one JSON object from stdout. This script just posts it to
 # the local Ariadne server. Exit 0: OK. Exit 3: verb not supported. Anything else: an error (on stderr).
 #
-# ARIADNE_URL: the Ariadne server (default http://127.0.0.1:3100). It must be a host Ariadne allows
-# (ARIADNE_ALLOWED_HOSTS). When ARIADNE_TOKEN is set on the server, set the same here.
+# ARIADNE_URL: the Ariadne server (default http://127.0.0.1:3100). It must be the loopback host and port
+# Ariadne allows (ARIADNE_ALLOWED_HOSTS); the endpoints refuse anything else.
 set -eu
 base=${ARIADNE_URL:-http://127.0.0.1:3100}
 
@@ -20,14 +20,8 @@ esac
 input=$(cat)
 [ -n "$input" ] || input='{}'
 
-auth_args=
-if [ -n "${ARIADNE_TOKEN:-}" ]; then
-  auth_args="-HAuthorization: Bearer ${ARIADNE_TOKEN}"
-fi
-
 status=0
-# shellcheck disable=SC2086
-out=$(printf '%s' "$input" | curl -sS -o - -w '\n%{http_code}' -H 'content-type: application/json' $auth_args --data-binary @- "$base/api/steward/$1") || status=$?
+out=$(printf '%s' "$input" | curl -sS -o - -w '\n%{http_code}' -H 'content-type: application/json' --data-binary @- "$base/api/steward/$1") || status=$?
 if [ "$status" -ne 0 ]; then
   echo "steward-backend-ariadne: can't reach Ariadne at $base (curl exit $status)" >&2
   exit 1

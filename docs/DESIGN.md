@@ -121,11 +121,10 @@ steward daemon ──exec──► scripts/steward-backend-ariadne ──HTTP (/
 
 - **MCP tools:** `get_node` (a node with its edges; for a task, readiness, inherited context, and
   branches), `search` (text, kind, status, `decisions`), `graph` (reachable subgraph, or roots and
-  actors), `history`, `apply_ops`, `undo`. Stateless Streamable HTTP. Localhost needs no token; with
-  `ARIADNE_TOKEN`, `/mcp` and `/api` require Bearer (or the UI session cookie from `POST /api/auth`).
-  Remote access is a Cloudflare Tunnel to loopback plus that token (README). Cursor can send headers;
-  a browser Cloudflare Access login in front of `/mcp` does not work for Cursor — use Access Service
-  Auth headers if Access wraps the hostname, or leave `/mcp` outside Access.
+  actors), `history`, `apply_ops`, `undo`. Stateless Streamable HTTP. Localhost is Host-allowlisted
+  only. Remote access is a Cloudflare Tunnel sidecar plus Access: Service Auth on `/mcp` (Cursor
+  sends `CF-Access-Client-*` headers), IdP Allow on the rest of the site (docs/CLOUDFLARE.md). No
+  app-level Bearer token.
 - **SSE:** browsers refetch on `changed`.
 - **Undo:** `history` (grouped by changeset) and `undo` over MCP. An undo is refused if something
   changed again since. In the UI, a delete shows a short "Deleted … Undo" message (`/api/ops` returns
@@ -243,7 +242,7 @@ state `done` or `dropped`, so a teammate's replica sees that it ended.
 
 | Date | Decision |
 |---|---|
-| 2026-10-18 | Remote Cursor access: cloudflared to loopback + shared `ARIADNE_TOKEN` (Bearer). Browser Cloudflare Access is not relied on for `/mcp`; optional Access Service Auth headers if the hostname is wrapped. (Karl, 2026-10-18) |
+| 2026-10-18 | Remote access: cloudflared quadlet + Cloudflare Access — Service Auth on `/mcp` for Cursor, IdP on other routes; no Ariadne Bearer token. Hostname `ariadne.bielefeldt.dev`. (Karl, 2026-10-18) |
 | 2026-10-14 | Private notes are editable in the UI with a required reason field, not only through Claude Code; reads stay default-deny (node view only). (Karl, 2026-10-14) |
 | 2026-10-14 | Publish is stateless: the full set with `full: true` whenever the audit log moved, rather than a table of what was published. steward already diffs against its own feed, and a stateless back end can't drift from it. Flip: add a `steward_published (item_id, hash, seq)` table and send true deltas. (Karl, 2026-10-14) |
 | 2026-10-14 | The cursor is the newest audit row id plus the row count, not a changeset id: changeset ids are UUIDs with no order. (Karl, 2026-10-14) |

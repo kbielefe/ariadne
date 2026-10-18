@@ -1,10 +1,11 @@
 // HTTP for the web UI, /mcp (Claude Code / Cursor), and /api/steward (the steward daemon).
-// Localhost installs need no token. Set ARIADNE_TOKEN to expose the same surface remotely (HTTPS + Bearer).
+// Auth at the edge when remote: Cloudflare Access (Service Auth on /mcp, IdP on the UI). See docs/CLOUDFLARE.md.
+// Localhost installs rely on the Host allowlist and a loopback-bound publish port.
 // UI edits apply directly and are audited.
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { USER_ID } from '../shared/model';
-import { clearTokenCookie, originAllowed, presentedToken, secretEqual, setTokenCookie } from './auth';
+import { originAllowed } from './auth';
 import { ContextBuilder, describeChange } from './context';
 import type { Core } from './core';
 import { handleMcp } from './mcp';
@@ -14,12 +15,6 @@ import { who } from './store';
 
 export interface ApiOptions {
   allowedHosts: string[];
-  /** When set, /mcp and /api/* require Bearer or the session cookie from POST /api/auth. */
-  accessToken?: string;
-}
-
-function needsAuth(url: string): boolean {
-  return url === '/mcp' || url.startsWith('/mcp?') || url.startsWith('/api/');
 }
 
 export function registerApi(app: FastifyInstance, core: Core, o: ApiOptions) {
@@ -29,11 +24,6 @@ export function registerApi(app: FastifyInstance, core: Core, o: ApiOptions) {
     if (!o.allowedHosts.includes(req.headers.host ?? '')) return reply.code(421).send({ error: 'Host not allowed' });
     const origin = req.headers.origin;
     if (origin && req.method !== 'GET' && !originAllowed(origin, o.allowedHosts)) return reply.code(403).send({ error: 'Cross-origin request refused' });
-    if (!o.accessToken || !needsAuth(req.url) || req.url.startsWith('/api/auth')) return;
-    const presented = presentedToken(req);
-    if (!presented || !secretEqual(presented, o.accessToken)) {
-      return reply.code(401).header('www-authenticate', 'Bearer').send({ error: 'Authorization required (Bearer token)' });
-    }
   });
 
   app.setErrorHandler((err, _req, reply) => {
@@ -50,26 +40,6 @@ export function registerApi(app: FastifyInstance, core: Core, o: ApiOptions) {
   app.get('/health/live', async () => ({ ok: true }));
   app.get('/health/ready', async () => {
     await core.db.query('SELECT 1');
-    return { ok: true };
-  });
-
-  // Token gate for the web UI (HttpOnly cookie) and a status check for the unlock screen.
-  app.get('/api/auth', async (req) => {
-    if (!o.accessToken) return { required: false, ok: true };
-    const presented = presentedToken(req);
-    return { required: true, ok: !!presented && secretEqual(presented, o.accessToken) };
-  });
-  app.post('/api/auth', async (req, reply) => {
-    if (!o.accessToken) return { required: false, ok: true };
-    const token = z.object({ token: z.string().min(1) }).parse(req.body).token;
-    if (!secretEqual(token, o.accessToken)) return reply.code(401).send({ error: 'Wrong token' });
-    const secure = (req.headers['x-forwarded-proto'] === 'https') || req.protocol === 'https';
-    setTokenCookie(reply, o.accessToken, secure);
-    return { required: true, ok: true };
-  });
-  app.post('/api/auth/logout', async (req, reply) => {
-    const secure = (req.headers['x-forwarded-proto'] === 'https') || req.protocol === 'https';
-    clearTokenCookie(reply, secure);
     return { ok: true };
   });
 
@@ -123,7 +93,7 @@ export function registerApi(app: FastifyInstance, core: Core, o: ApiOptions) {
     }
   });
 
-  // ---- MCP: Streamable HTTP. Localhost needs no token; with ARIADNE_TOKEN, Bearer (or the UI cookie).
+  // ---- MCP: Streamable HTTP. Remote access is gated by Cloudflare Access Service Auth (docs/CLOUDFLARE.md).
   app.post('/mcp', async (req, reply) => {
     reply.hijack();
     await handleMcp(core, req.raw, reply.raw, req.body);

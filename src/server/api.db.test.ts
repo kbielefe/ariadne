@@ -248,50 +248,6 @@ describe('decisions', () => {
   });
 });
 
-describe('access token', () => {
-  it('requires Bearer (or the unlock cookie) when ARIADNE_TOKEN is set', async () => {
-    await app.close();
-    ({ db, core } = await freshCore());
-    app = Fastify();
-    const port = 39000 + Math.floor(Math.random() * 1000);
-    registerApi(app, core, { allowedHosts: [`127.0.0.1:${port}`, 'ariadne.example'], accessToken: 'test-secret' });
-    await app.listen({ host: '127.0.0.1', port });
-    base = `http://127.0.0.1:${port}`;
-
-    expect((await fetch(`${base}/api/graph`)).status).toBe(401);
-    expect((await fetch(`${base}/api/auth`)).status).toBe(200);
-    expect(await (await fetch(`${base}/api/auth`)).json()).toEqual({ required: true, ok: false });
-
-    const denied = await fetch(`${base}/mcp`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
-    expect(denied.status).toBe(401);
-
-    expect((await fetch(`${base}/api/graph`, { headers: { authorization: 'Bearer test-secret' } })).status).toBe(200);
-    const unlock = await fetch(`${base}/api/auth`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token: 'test-secret' }) });
-    expect(unlock.status).toBe(200);
-    const cookie = unlock.headers.getSetCookie?.().find((c) => c.startsWith('ariadne_token=')) ?? unlock.headers.get('set-cookie');
-    expect(cookie).toMatch(/ariadne_token=/);
-    expect((await fetch(`${base}/api/graph`, { headers: { cookie: cookie!.split(';')[0]! } })).status).toBe(200);
-
-    const httpsOrigin = await app.inject({
-      method: 'POST',
-      url: '/api/ops',
-      headers: { host: 'ariadne.example', origin: 'https://ariadne.example', authorization: 'Bearer test-secret', 'content-type': 'application/json' },
-      payload: { ops: [{ op: 'create_node', kind: 'task', title: 'From HTTPS UI' }] },
-    });
-    expect(httpsOrigin.statusCode).toBe(200);
-
-    const client = new Client({ name: 'test-cursor', version: '0' });
-    await client.connect(
-      new StreamableHTTPClientTransport(new URL(`${base}/mcp`), {
-        requestInit: { headers: { authorization: 'Bearer test-secret' } },
-      }),
-    );
-    const tools = await client.listTools();
-    expect(tools.tools.some((t) => t.name === 'graph')).toBe(true);
-    await client.close();
-  });
-});
-
 describe('web API', () => {
   it('applies your edits directly, refuses other hosts, and reports bad input', async () => {
     const ok = await post('/api/ops', { ops: [{ op: 'create_node', kind: 'task', title: 'Mine' }] });
@@ -311,6 +267,23 @@ describe('web API', () => {
     await client.close();
     const after = (await (await fetch(`${base}/api/history`)).json()) as { who: string; via: string; line: string }[];
     expect(after.at(-1)).toMatchObject({ who: 'Claude (MCP)', via: 'mcp', line: 'updated task "Mine!": title' });
+  });
+
+  it('allows https Origins for tunnel hostnames listed in ARIADNE_ALLOWED_HOSTS', async () => {
+    await app.close();
+    ({ db, core } = await freshCore());
+    app = Fastify();
+    const port = 39000 + Math.floor(Math.random() * 1000);
+    registerApi(app, core, { allowedHosts: [`127.0.0.1:${port}`, 'ariadne.bielefeldt.dev'] });
+    await app.listen({ host: '127.0.0.1', port });
+    base = `http://127.0.0.1:${port}`;
+    const httpsOrigin = await app.inject({
+      method: 'POST',
+      url: '/api/ops',
+      headers: { host: 'ariadne.bielefeldt.dev', origin: 'https://ariadne.bielefeldt.dev', 'content-type': 'application/json' },
+      payload: { ops: [{ op: 'create_node', kind: 'task', title: 'From tunnel UI' }] },
+    });
+    expect(httpsOrigin.statusCode).toBe(200);
   });
 
   it('lets you edit private notes in the UI, only with a reason, and keeps the reason in the history', async () => {

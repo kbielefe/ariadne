@@ -25,7 +25,6 @@ async function main() {
   const host = env.ARIADNE_LISTEN_HOST ?? '127.0.0.1';
   const port = Number(env.ARIADNE_LISTEN_PORT ?? 3100);
   const allowedHosts = (env.ARIADNE_ALLOWED_HOSTS ?? `127.0.0.1:${port},localhost:${port}`).split(',').map((h) => h.trim()).filter(Boolean);
-  const accessToken = secret('ARIADNE_TOKEN');
 
   const db = createPool(databaseUrl);
   const applied = await migrate(db, env.ARIADNE_MIGRATIONS_DIR ?? resolve(import.meta.dirname, 'migrations'));
@@ -36,11 +35,8 @@ async function main() {
   const core = new Core(db, hub);
 
   const app = Fastify({ logger: { level: env.LOG_LEVEL ?? 'info' }, bodyLimit: 2 * 1024 * 1024, trustProxy: env.ARIADNE_TRUST_PROXY === '1' });
-  registerApi(app, core, { allowedHosts, ...(accessToken ? { accessToken } : {}) });
-  if (accessToken) console.log('ARIADNE_TOKEN set: /mcp and /api require Bearer (or the UI session cookie)');
-  else if (!['127.0.0.1', 'localhost', '::1'].includes(host)) {
-    console.warn('ARIADNE_TOKEN is unset while listening beyond loopback; only Host allowlisting protects the API');
-  }  const webDir = resolve(env.ARIADNE_WEB_DIR ?? 'dist/web');
+  registerApi(app, core, { allowedHosts });
+  const webDir = resolve(env.ARIADNE_WEB_DIR ?? 'dist/web');
   if (existsSync(webDir)) {
     await app.register(fastifyStatic, { root: webDir });
     // Client-side routes get the app; missing API routes and assets get a plain 404.

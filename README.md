@@ -6,8 +6,8 @@ look things up and update the graph; the web UI is the graph view, for the big p
 edits. Every change is audited and can be undone. The design and its reasons are in
 [docs/DESIGN.md](docs/DESIGN.md).
 
-> **Local by default.** Without `ARIADNE_TOKEN`, neither the web UI nor `/mcp` has authentication:
-> bind the published port to loopback only. For a Cloudflare Tunnel (or any remote URL), set a token.
+> **Local by default.** The published port stays on loopback. Remote access is a Cloudflare Tunnel
+> plus Access: Service Auth on `/mcp` (Cursor), IdP on the UI. See [docs/CLOUDFLARE.md](docs/CLOUDFLARE.md).
 
 ## Quick start (Compose)
 
@@ -46,20 +46,21 @@ edits. Every change is audited and can be undone. The design and its reasons are
 
 To deploy UI or server changes: `podman compose build app && podman compose up -d --force-recreate app`.
 
-The same stack is installed as rootless Quadlets:
+The same stack is installed as rootless Quadlets (includes optional `ariadne-cloudflared`):
 
 ```sh
 podman quadlet install --application ariadne --replace quadlet
-systemctl --user start ariadne-app.service
+systemctl --user start ariadne-app.service ariadne-cloudflared.service
 ```
 
-At start, `quadlet/render-env.sh` reads `POSTGRES_PASSWORD` from `%h/source/ariadne/.env` for Postgres and the app. The containers are `ariadne-app` and `ariadne-postgres`, with network aliases `app` and `postgres`.
+At start, `quadlet/render-env.sh` reads `%h/source/ariadne/.env` for Postgres, the app, and the
+tunnel token. The containers are `ariadne-app`, `ariadne-postgres`, and `ariadne-cloudflared`, with
+network aliases `app` and `postgres`.
 
 ### Quadlets with a hand-built image (`deploy/quadlet/`)
 
 A smaller set (e.g. for the work laptop): a hand-built image and podman secrets instead of `render-env.sh`.
-Instead of Compose, run Ariadne as rootless Podman quadlets, so it starts with
-your session. They reuse the Compose data volume, so stop Compose first (`podman compose down`).
+They reuse the Compose data volume, so stop Compose first (`podman compose down`).
 
 ```sh
 podman build -t localhost/ariadne2:0.3.0 .   # needs the VPN
@@ -69,104 +70,40 @@ scripts/install-quadlet.sh                    # units + secrets from .env, then 
 - Status and logs: `systemctl --user status ariadne` · `journalctl --user -u ariadne -f`
 - Redeploy after a rebuild: `systemctl --user restart ariadne`
 - Start at boot without logging in: `loginctl enable-linger`
+- Tunnel (when `CLOUDFLARE_TUNNEL_TOKEN` is in `.env`): `systemctl --user status ariadne-cloudflared`
 
-## Remote access (cloudflared + Cursor)
+## Remote access (cloudflared + Access)
 
-Keep Ariadne on loopback; put a Cloudflare Tunnel in front. App-level auth is a shared Bearer token
-(`ARIADNE_TOKEN`). Cursor speaks Streamable HTTP and can send headers; it does **not** complete a
-browser Cloudflare Access login by itself.
+Full steps: **[docs/CLOUDFLARE.md](docs/CLOUDFLARE.md)**. Summary for `ariadne.bielefeldt.dev`:
 
-### 1. Token and Host allowlist
+1. Cloudflare Tunnel public hostname → `http://app:3100` (or `http://ariadne:3100` on the laptop units).
+2. Access app on **`/mcp`**: policy **Service Auth** + an Access service token.
+3. Access app on the hostname: policy **Allow** + your IdP.
+4. Cursor:
 
-In `.env` (and recreate the app container / re-render the quadlet env):
+   ```json
+   {
+     "mcpServers": {
+       "ariadne": {
+         "url": "https://ariadne.bielefeldt.dev/mcp",
+         "headers": {
+           "CF-Access-Client-Id": "${env:CF_ACCESS_CLIENT_ID}",
+           "CF-Access-Client-Secret": "${env:CF_ACCESS_CLIENT_SECRET}"
+         }
+       }
+     }
+   }
+   ```
 
-```sh
-ARIADNE_TOKEN=$(openssl rand -hex 32)          # keep this; Cursor will send it
-ARIADNE_ALLOWED_HOSTS=127.0.0.1:3100,localhost:3100,ariadne.example.com
-ARIADNE_TRUST_PROXY=1                          # Secure cookies behind the tunnel
-```
-
-`ARIADNE_ALLOWED_HOSTS` must include the public hostname Cloudflare sends in `Host` (usually
-without a port).
-
-### 2. Tunnel to loopback
-
-Example `~/.cloudflared/config.yml` ingress (hostname → local Compose/quadlet port):
-
-```yaml
-ingress:
-  - hostname: ariadne.example.com
-    service: http://127.0.0.1:3100
-  - service: http_status:404
-```
-
-Leave the published Podman port on `127.0.0.1` only. The tunnel is the only way in from the internet.
-
-### 3. Cursor MCP config
-
-```json
-{
-  "mcpServers": {
-    "ariadne": {
-      "url": "https://ariadne.example.com/mcp",
-      "headers": {
-        "Authorization": "Bearer ${env:ARIADNE_TOKEN}"
-      }
-    }
-  }
-}
-```
-
-Put `ARIADNE_TOKEN` in your shell environment (or another secret store Cursor can interpolate). Do
-not commit the raw token into `mcp.json`.
-
-Claude Code, when the token is set:
-
-```sh
-claude mcp add --scope user --transport http ariadne https://ariadne.example.com/mcp \
-  --header "Authorization: Bearer $ARIADNE_TOKEN"
-```
-
-The web UI asks for the same token once and stores an HttpOnly cookie.
-
-### Cloudflare Access (Zero Trust)
-
-| Approach | Works with Cursor MCP? |
-|---|---|
-| Tunnel only + `ARIADNE_TOKEN` | Yes (recommended default) |
-| Access **browser** login (IdP / one-time PIN) in front of `/mcp` | No — Cursor will not complete the Access redirect |
-| Access **Service Auth** (service token) in front of the hostname | Yes — add the CF headers in `mcp.json` (below) |
-| Access on the **UI only**; `/mcp` outside Access, still requiring `ARIADNE_TOKEN` | Yes |
-
-If you put Access on the whole hostname, create a **Service Auth** policy with a service token and
-send both headers every request (in addition to Ariadne's Bearer):
-
-```json
-{
-  "mcpServers": {
-    "ariadne": {
-      "url": "https://ariadne.example.com/mcp",
-      "headers": {
-        "Authorization": "Bearer ${env:ARIADNE_TOKEN}",
-        "CF-Access-Client-Id": "${env:CF_ACCESS_CLIENT_ID}",
-        "CF-Access-Client-Secret": "${env:CF_ACCESS_CLIENT_SECRET}"
-      }
-    }
-  }
-}
-```
-
-Cloudflare's [Authenticate coding agents](https://developers.cloudflare.com/cloudflare-one/access-controls/authenticate-agents/)
-doc covers Service Auth. A simpler split many people use: Access protects browser paths you care
-about, and `/mcp` stays reachable through the tunnel with Bearer only.
+A browser IdP login in front of `/mcp` alone does **not** work with Cursor; Service Auth headers do.
 
 ## Sharing with the pod
 
 Ariadne no longer shares subgraphs itself. Sharing work with teammates is **steward**'s job, a separate
 project; Ariadne is one of its back ends. Put `scripts/steward-backend-ariadne` on the steward daemon's
-`PATH` (set `ARIADNE_URL` if Ariadne isn't on `http://127.0.0.1:3100`, and `ARIADNE_TOKEN` when the
-server has one). Only tasks with `attrs.steward: true`, and what they need, are shared. Private notes
-never leave this machine. See [docs/DESIGN.md](docs/DESIGN.md) §6.
+`PATH` (set `ARIADNE_URL` if Ariadne isn't on `http://127.0.0.1:3100`). Only tasks with
+`attrs.steward: true`, and what they need, are shared. Private notes never leave this machine. See
+[docs/DESIGN.md](docs/DESIGN.md) §6.
 
 ## Development
 
@@ -186,3 +123,4 @@ never leave this machine. See [docs/DESIGN.md](docs/DESIGN.md) §6.
 | `src/shared` | The vocabulary: node kinds, edge rules, ops, graph helpers |
 | `src/server` | Fastify API + SSE, MCP, ops and undo, task context |
 | `src/web` | React: the graph view (cytoscape) |
+| `docs/CLOUDFLARE.md` | Tunnel + Access setup for Cursor and the UI |
